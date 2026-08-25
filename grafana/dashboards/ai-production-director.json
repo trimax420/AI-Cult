@@ -1,0 +1,106 @@
+{
+  "annotations":{"list":[]},
+  "editable":true,
+  "graphTooltip":1,
+  "panels":[
+    {
+      "id":1,"type":"stat","title":"Predicted deadline impact","description":"Negative means early; positive means minutes late.",
+      "gridPos":{"h":5,"w":6,"x":0,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"render_predicted_delay_minutes{production_id=\"$production\"}","legendFormat":"Deadline impact"}],
+      "fieldConfig":{"defaults":{"unit":"m","color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"green"},{"color":"orange","value":0},{"color":"red","value":60}]}},"overrides":[]},
+      "options":{"colorMode":"background","graphMode":"area","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"}
+    },
+    {
+      "id":2,"type":"gauge","title":"GPU memory pressure","gridPos":{"h":5,"w":6,"x":6,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"render_gpu_memory_utilization_percent{production_id=\"$production\"}","legendFormat":"GPU memory"}],
+      "fieldConfig":{"defaults":{"unit":"percent","min":0,"max":100,"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"green"},{"color":"orange","value":85},{"color":"red","value":95}]}},"overrides":[]},
+      "options":{"reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"showThresholdLabels":false,"showThresholdMarkers":true}
+    },
+    {
+      "id":3,"type":"stat","title":"Active GPU workers","gridPos":{"h":5,"w":6,"x":12,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"render_gpu_workers_active{production_id=\"$production\"}","legendFormat":"Workers"}],
+      "fieldConfig":{"defaults":{"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"red"},{"color":"orange","value":150},{"color":"green","value":190}]}},"overrides":[]},
+      "options":{"colorMode":"value","graphMode":"area","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"}
+    },
+    {
+      "id":4,"type":"stat","title":"Recovery progress","gridPos":{"h":5,"w":6,"x":18,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"render_recovery_progress_percent{production_id=\"$production\"}","legendFormat":"Recovery"}],
+      "fieldConfig":{"defaults":{"unit":"percent","min":0,"max":100,"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"blue"},{"color":"green","value":100}]}},"overrides":[]},
+      "options":{"colorMode":"value","graphMode":"area","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"}
+    },
+    {
+      "id":5,"type":"timeseries","title":"Render queue depth","gridPos":{"h":8,"w":12,"x":0,"y":5},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"render_queue_depth{production_id=\"$production\"}","legendFormat":"Render queue"}],
+      "fieldConfig":{"defaults":{"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","fillOpacity":16,"lineInterpolation":"smooth","lineWidth":2,"showPoints":"never"},"thresholds":{"mode":"absolute","steps":[{"color":"green"},{"color":"orange","value":40},{"color":"red","value":80}]}},"overrides":[]},
+      "options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"single"}}
+    },
+    {
+      "id":6,"type":"timeseries","title":"Render latency","gridPos":{"h":8,"w":12,"x":12,"y":5},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"render_scene_duration_seconds{production_id=\"$production\"}","legendFormat":"Average scene duration"}],
+      "fieldConfig":{"defaults":{"unit":"s","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","fillOpacity":12,"lineInterpolation":"smooth","lineWidth":2,"showPoints":"never"}},"overrides":[]},
+      "options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"single"}}
+    },
+    {
+      "id":7,"type":"timeseries","title":"Business impact: predicted delivery delay","gridPos":{"h":8,"w":16,"x":0,"y":13},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"render_predicted_delay_minutes{production_id=\"$production\"}","legendFormat":"Minutes early / late"}],
+      "fieldConfig":{"defaults":{"unit":"m","color":{"mode":"continuous-GrYlRd"},"custom":{"axisCenteredZero":true,"drawStyle":"line","fillOpacity":20,"lineInterpolation":"smooth","lineWidth":3,"showPoints":"never"},"thresholds":{"mode":"absolute","steps":[{"color":"green"},{"color":"red","value":0}]}},"overrides":[]},
+      "options":{"legend":{"calcs":["lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"single"}}
+    },
+    {
+      "id":8,"type":"logs","title":"Correlated render logs","gridPos":{"h":8,"w":8,"x":16,"y":13},"datasource":{"type":"loki","uid":"loki"},
+      "targets":[{"refId":"A","expr":"{service_name=\"render-farm-simulator\"}","queryType":"range"}],
+      "options":{"dedupStrategy":"none","enableLogDetails":true,"showLabels":false,"showTime":true,"sortOrder":"Descending","wrapLogMessage":true}
+    },
+    {
+      "id":9,"type":"state-timeline","title":"Active operating condition","description":"The active condition, severity, and affected subsystem.","gridPos":{"h":6,"w":24,"x":0,"y":21},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"render_condition_ratio{production_id=\"$production\"} == 1","legendFormat":"{{scenario}} · {{severity}} · {{component}}"}],
+      "fieldConfig":{"defaults":{"color":{"mode":"thresholds"},"custom":{"fillOpacity":75,"lineWidth":0},"thresholds":{"mode":"absolute","steps":[{"color":"green"}]}},"overrides":[]},
+      "options":{"alignValue":"left","legend":{"displayMode":"list","placement":"bottom","showLegend":true},"mergeValues":true,"rowHeight":0.8,"showValue":"never","tooltip":{"mode":"single"}}
+    },
+    {
+      "id":10,"type":"gauge","title":"Storage utilization","gridPos":{"h":6,"w":6,"x":0,"y":27},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"render_storage_utilization_percent{production_id=\"$production\"}","legendFormat":"Storage"}],
+      "fieldConfig":{"defaults":{"unit":"percent","min":0,"max":100,"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"green"},{"color":"orange","value":80},{"color":"red","value":95}]}},"overrides":[]},
+      "options":{"reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"showThresholdLabels":false,"showThresholdMarkers":true}
+    },
+    {
+      "id":11,"type":"stat","title":"Estimated production cost","gridPos":{"h":6,"w":6,"x":6,"y":27},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"render_cost_estimated_USD{production_id=\"$production\"}","legendFormat":"Estimated cost"}],
+      "fieldConfig":{"defaults":{"unit":"currencyUSD","color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"green"},{"color":"orange","value":1200},{"color":"red","value":1800}]}},"overrides":[]},
+      "options":{"colorMode":"background","graphMode":"area","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"}
+    },
+    {
+      "id":12,"type":"stat","title":"Recorded incidents","gridPos":{"h":6,"w":6,"x":12,"y":27},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"sum(render_failures_total{production_id=\"$production\"}) or vector(0)","legendFormat":"Incidents"}],
+      "fieldConfig":{"defaults":{"decimals":0,"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"green"},{"color":"orange","value":1},{"color":"red","value":4}]}},"overrides":[]},
+      "options":{"colorMode":"value","graphMode":"area","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"}
+    },
+    {
+      "id":13,"type":"stat","title":"Asset error rate","gridPos":{"h":6,"w":6,"x":18,"y":27},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"render_asset_error_rate_percent{production_id=\"$production\"}","legendFormat":"Asset failures"}],
+      "fieldConfig":{"defaults":{"unit":"percent","min":0,"max":100,"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"green"},{"color":"orange","value":2},{"color":"red","value":10}]}},"overrides":[]},
+      "options":{"colorMode":"background","graphMode":"area","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"}
+    },
+    {
+      "id":14,"type":"timeseries","title":"Network latency","gridPos":{"h":8,"w":12,"x":0,"y":33},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"render_network_latency_milliseconds{production_id=\"$production\"}","legendFormat":"Network latency"}],
+      "fieldConfig":{"defaults":{"unit":"ms","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","fillOpacity":18,"lineInterpolation":"smooth","lineWidth":2,"showPoints":"never"},"thresholds":{"mode":"absolute","steps":[{"color":"green"},{"color":"orange","value":100},{"color":"red","value":500}]}},"overrides":[]},
+      "options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"single"}}
+    },
+    {
+      "id":15,"type":"timeseries","title":"Storage and asset health","gridPos":{"h":8,"w":12,"x":12,"y":33},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"render_storage_utilization_percent{production_id=\"$production\"}","legendFormat":"Storage utilization"},{"refId":"B","expr":"render_asset_error_rate_percent{production_id=\"$production\"}","legendFormat":"Asset error rate"}],
+      "fieldConfig":{"defaults":{"unit":"percent","min":0,"max":100,"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","fillOpacity":12,"lineInterpolation":"smooth","lineWidth":2,"showPoints":"never"}},"overrides":[]},
+      "options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi"}}
+    }
+  ],
+  "refresh":"5s",
+  "schemaVersion":41,
+  "tags":["ai-production-director","render-farm","demo"],
+  "templating":{"list":[{"name":"production","label":"Production","type":"query","datasource":{"type":"prometheus","uid":"prometheus"},"query":{"query":"label_values(render_queue_depth, production_id)","refId":"VariableQuery"},"definition":"label_values(render_queue_depth, production_id)","current":{"text":"neon-horizon-trailer","value":"neon-horizon-trailer"},"refresh":1,"sort":1}]},
+  "time":{"from":"now-30m","to":"now"},
+  "timezone":"browser",
+  "title":"AI Production Director",
+  "uid":"ai-production-director",
+  "version":1
+}

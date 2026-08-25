@@ -1,0 +1,6 @@
+import{BotIcon,CircleIcon,UserRoundIcon}from"lucide-react"
+import{Card,CardContent,CardHeader,CardTitle}from"@/components/ui/card"
+import{Table,TableBody,TableCell,TableHead,TableHeader,TableRow}from"@/components/ui/table"
+import type{AuditEvent}from"@/lib/types"
+const readable=(value:string)=>value.split("_").map(part=>part[0]?.toUpperCase()+part.slice(1)).join(" ")
+export function AuditTable({events}:{events:AuditEvent[]}){return <Card className="audit-card"><CardHeader><CardTitle>Activity timeline</CardTitle></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Actor</TableHead><TableHead>Event</TableHead><TableHead>Details</TableHead><TableHead>Impact</TableHead></TableRow></TableHeader><TableBody>{events.slice(0,8).map(event=><TableRow key={event.id}><TableCell>{new Date(event.timestamp).toLocaleTimeString()}</TableCell><TableCell>{event.approved_by?<UserRoundIcon/>:<BotIcon/>}{event.approved_by??"system"}</TableCell><TableCell><CircleIcon data-severity={event.severity??"normal"}/>{readable(event.event_type)}</TableCell><TableCell>{event.plan_id?`Plan: ${event.plan_id}`:event.scenario??event.previous??"Production event"}</TableCell><TableCell>{event.severity??"—"}</TableCell></TableRow>)}</TableBody></Table></CardContent></Card>}

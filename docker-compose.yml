@@ -1,0 +1,45 @@
+services:
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: ai-production-lgtm
+    ports:
+      - "3000:3000"
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+      - lgtm-data:/data
+    environment:
+      ENABLE_LOGS_ALL: "false"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  render-simulator:
+    build:
+      context: ./simulator
+    container_name: ai-production-render-simulator
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4317
+      OTEL_SERVICE_NAME: render-farm-simulator
+      SIM_TICK_SECONDS: "2"
+      PRODUCTION_ID: neon-horizon-trailer
+      DELIVERY_DEADLINE_MINUTES: "360"
+    ports:
+      - "8080:8080"
+    depends_on:
+      lgtm:
+        condition: service_healthy
+
+  operator-dashboard:
+    build:
+      context: ./operator-dashboard
+    container_name: ai-production-operator-dashboard
+    ports:
+      - "4173:80"
+    depends_on:
+      - render-simulator
+
+volumes:
+  lgtm-data:

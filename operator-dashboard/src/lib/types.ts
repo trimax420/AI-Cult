@@ -1,0 +1,5 @@
+export type Diagnosis={production_id:string;generated_at:string;scenario:string;severity:"normal"|"info"|"warning"|"critical";affected_component:string;root_cause:string;confidence:number;delivery_impact:{predicted_delay_minutes:number;deadline_at_risk:boolean;minutes_late:number};evidence:{queue_depth:number;active_gpu_workers:number;gpu_memory_utilization:number;storage_utilization:number;network_latency_ms:number;asset_error_rate:number};recommended_plan_id:string|null}
+export type RecoveryPlan={plan_id:string;title:string;estimated_recovery_minutes:number;estimated_added_cost_usd:number;risk:"low"|"medium"|"high";recommended:boolean;requires_approval:boolean;scenario:string}
+export type AuditEvent={id:string;timestamp:string;event_type:string;production_id:string;scenario?:string;approved_by?:string;plan_id?:string;execution_id?:string;previous?:string;severity?:string;component?:string}
+export type RenderState={scenario:string;queue_depth:number;gpu_workers_total:number;gpu_workers_active:number;gpu_memory_utilization:number;retries_total:number;recovery_progress:number}
+export type TelemetryPoint={time:string;memory:number;queue:number}

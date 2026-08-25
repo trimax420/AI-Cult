@@ -1,0 +1,56 @@
+[
+  {
+    "title": "GPU memory exhaustion",
+    "expression": "render_gpu_memory_utilization_percent > 95",
+    "for": "20s",
+    "severity": "critical",
+    "component": "gpu",
+    "summary": "GPU memory is critically high",
+    "description": "GPU memory utilization exceeded 95%, indicating likely CUDA OOM risk."
+  },
+  {
+    "title": "Production deadline at risk",
+    "expression": "render_predicted_delay_minutes > 0",
+    "for": "30s",
+    "severity": "critical",
+    "component": "delivery",
+    "summary": "Production is forecast to miss its deadline",
+    "description": "The delivery forecast is now late. Investigate the active render condition and approve a recovery plan."
+  },
+  {
+    "title": "Render worker capacity loss",
+    "expression": "render_gpu_workers_active < 150",
+    "for": "20s",
+    "severity": "critical",
+    "component": "workers",
+    "summary": "Available GPU worker capacity has dropped",
+    "description": "Fewer than 150 GPU workers are active, putting throughput and delivery at risk."
+  },
+  {
+    "title": "Storage capacity exhausted",
+    "expression": "render_storage_utilization_percent > 95",
+    "for": "20s",
+    "severity": "critical",
+    "component": "storage",
+    "summary": "Render storage is nearly full",
+    "description": "Storage utilization exceeded 95%. New render outputs may fail or stall."
+  },
+  {
+    "title": "Asset corruption detected",
+    "expression": "render_asset_error_rate_percent > 5",
+    "for": "20s",
+    "severity": "critical",
+    "component": "assets",
+    "summary": "Asset validation failures are elevated",
+    "description": "More than 5% of assets are failing, causing deterministic scene retries."
+  },
+  {
+    "title": "Critical dependency unavailable",
+    "expression": "render_condition_ratio{scenario=\"dependency_down\"} == 1",
+    "for": "10s",
+    "severity": "critical",
+    "component": "dependency",
+    "summary": "A required production dependency is unavailable",
+    "description": "The simulator reports a dependency outage that can stop dispatch and rendering."
+  }
+]
