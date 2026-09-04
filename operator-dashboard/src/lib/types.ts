@@ -11,3 +11,5 @@ export type Investigation={mode:string;workflow_state:WorkflowState;steps:Array<
 export type AgentEvent={content?:{parts?:Array<{text?:string;functionCall?:{name:string};functionResponse?:{name:string;response:unknown}}>};usageMetadata?:{promptTokenCount?:number;candidatesTokenCount?:number;totalTokenCount?:number}}
 export type WhatIfResult={workers_added:number;deadline_minutes:number;quality_percent:number;prioritize_critical:boolean;projected_throughput_fph:number;projected_completion_minutes:number;projected_delay_minutes:number;added_cost_usd:number;deadline_result:string}
 export type VerificationComparison={available:boolean;passed?:boolean;before?:{throughput_fph:number;healthy_workers:number;critical_queue:number;delay_minutes:number};after?:{throughput_fph:number;healthy_workers:number;critical_queue:number;delay_minutes:number}}
+export type CopilotBriefing={status:"on_track"|"decision_required";headline:string;summary:string;evidence:string[];next_step:string;source:string}
+export type CopilotReply={answer:string;source:string;briefing:CopilotBriefing;suggested_action:string|null;plans:RecoveryPlan[]}

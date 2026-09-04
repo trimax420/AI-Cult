@@ -79,6 +79,10 @@ class WhatIfRequest(BaseModel):
     prioritize_critical: bool = False
 
 
+class CopilotRequest(BaseModel):
+    message: str
+
+
 app = FastAPI(title="AI Production Director — Project Nova", version="1.0.0")
 FastAPIInstrumentor.instrument_app(app, tracer_provider=trace_provider)
 
@@ -277,6 +281,58 @@ def recovery_options() -> list[dict]:
                     "recommended": False, "requires_approval": False,
                     "rationale": "Preserves budget but accepts the full delivery delay."})
     return options
+
+
+def copilot_briefing() -> dict:
+    state = engine.status()
+    impact = state["impact"]
+    if not state["incident_active"]:
+        return {"status": "on_track", "headline": "Trailer delivery is protected.",
+                "summary": f"{state['gpu_workers_active']} healthy workers are delivering {impact['current_throughput_fph']} frames/hour, above the {impact['required_throughput_fph']} frames/hour required rate.",
+                "evidence": ["GPU memory is within its normal operating band.", "Trailer-critical queue is draining ahead of deadline."],
+                "next_step": "Continue monitoring. Ask the copilot for a schedule, cost, or scene-level update."}
+    scene = "Scene 94" if state["scenario"] == "corrupted_asset" else "Scene 87"
+    cause = "the corrupted nova_city.exr asset is forcing retries" if state["scenario"] == "corrupted_asset" else "GPU memory exhaustion has taken eight workers out of service"
+    return {"status": "decision_required", "headline": f"{scene} threatens the trailer delivery window.",
+            "summary": f"{cause.capitalize()}. Throughput is {impact['current_throughput_fph']} frames/hour against {impact['required_throughput_fph']} required; without intervention the trailer is projected {impact['projected_delay_minutes']} minutes late.",
+            "evidence": [f"GPU memory: {state['gpu_memory_utilization']}%", f"Healthy workers: {state['gpu_workers_active']}/{state['gpu_workers_total']}", f"Trailer-critical queue: {state['critical_queue_depth']} frames"],
+            "next_step": "Ask for a recovery recommendation or choose a plan; every execution still needs one human approval."}
+
+
+@app.get("/copilot/briefing")
+def copilot_live_briefing():
+    return {**copilot_briefing(), "source": "live-project-context"}
+
+
+@app.post("/copilot/chat")
+def copilot_chat(request: CopilotRequest):
+    """Grounded local copilot fallback; real Gemini can replace this endpoint later."""
+    message = request.message.strip().lower()
+    if not message:
+        raise HTTPException(400, "message is required")
+    state = engine.status()
+    briefing = copilot_briefing()
+    plans = recovery_options() if state["incident_active"] else []
+    suggested_action = None
+    if state["incident_active"]:
+        if any(word in message for word in ("fix", "recommend", "recover", "option", "do")):
+            suggested_action = next((plan["plan_id"] for plan in plans if plan.get("recommended")), None)
+        for action, keywords in {"prioritize-scenes": ("priorit", "trailer"), "add-workers": ("worker", "capacity"),
+                                 "restart-workers": ("restart",), "reduce-preview-quality": ("quality", "preview")}.items():
+            if any(keyword in message for keyword in keywords):
+                suggested_action = action
+                break
+    if "cost" in message and state["incident_active"]:
+        answer = "I recalculated the available recovery paths from the current queue and worker capacity. The cards below show their live added cost and delivery result."
+    elif any(word in message for word in ("why", "cause", "happen", "diagnos")):
+        answer = briefing["summary"] + " The diagnosis is grounded in the active metric, matching structured log, and correlated incident trace."
+    elif suggested_action:
+        plan = next(plan for plan in plans if plan["plan_id"] == suggested_action)
+        answer = f"I recommend {plan['title']}: {plan['rationale']} Its current projection is {plan['deadline_result']} at an added ${plan['estimated_added_cost_usd']}. I can prepare it for your approval."
+    else:
+        answer = briefing["summary"] + " " + briefing["next_step"]
+    return {"answer": answer, "source": "live-project-context", "briefing": briefing,
+            "suggested_action": suggested_action, "plans": plans}
 
 
 @app.get("/recovery-plans")

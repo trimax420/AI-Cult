@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { AppSidebar, type DashboardView } from "@/components/app-sidebar"
 import { AuditTable } from "@/components/audit-table"
 import { DiagnosisPanel } from "@/components/diagnosis-panel"
+import { CopilotPanel } from "@/components/copilot-panel"
 import { MetricCard } from "@/components/metric-card"
 import { OperationsTabs } from "@/components/operations-tabs"
 import { RecoveryPanel } from "@/components/recovery-panel"
@@ -66,6 +67,7 @@ function App() {
       <WhatIfPanel calculate={operations.whatIf} />
       <TelemetryChart data={operations.telemetry} />
       <DiagnosisPanel diagnosis={operations.diagnosis} />
+      {operations.briefing ? <CopilotPanel briefing={operations.briefing} ask={operations.askCopilot} onApprove={approve} busy={operations.busy} /> : null}
     </section>
     <RecoveryPanel plans={operations.plans} isApproving={operations.busy} onApprove={approve} />
     <AuditTable events={operations.audit} />
