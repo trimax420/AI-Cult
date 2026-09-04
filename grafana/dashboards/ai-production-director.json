@@ -4,7 +4,7 @@
   "graphTooltip":1,
   "panels":[
     {
-      "id":1,"type":"stat","title":"Predicted deadline impact","description":"Negative means early; positive means minutes late.",
+      "id":1,"type":"stat","title":"Project Nova trailer delay","description":"Deterministic minutes late for the trailer delivery.",
       "gridPos":{"h":5,"w":6,"x":0,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},
       "targets":[{"refId":"A","expr":"render_predicted_delay_minutes{production_id=\"$production\"}","legendFormat":"Deadline impact"}],
       "fieldConfig":{"defaults":{"unit":"m","color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"green"},{"color":"orange","value":0},{"color":"red","value":60}]}},"overrides":[]},
@@ -29,14 +29,14 @@
       "options":{"colorMode":"value","graphMode":"area","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"}
     },
     {
-      "id":5,"type":"timeseries","title":"Render queue depth","gridPos":{"h":8,"w":12,"x":0,"y":5},"datasource":{"type":"prometheus","uid":"prometheus"},
-      "targets":[{"refId":"A","expr":"render_queue_depth{production_id=\"$production\"}","legendFormat":"Render queue"}],
+      "id":5,"type":"timeseries","title":"Trailer-critical frame queue","gridPos":{"h":8,"w":12,"x":0,"y":5},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"render_queue_critical_depth_frames{production_id=\"$production\"}","legendFormat":"Critical frames"}],
       "fieldConfig":{"defaults":{"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","fillOpacity":16,"lineInterpolation":"smooth","lineWidth":2,"showPoints":"never"},"thresholds":{"mode":"absolute","steps":[{"color":"green"},{"color":"orange","value":40},{"color":"red","value":80}]}},"overrides":[]},
       "options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"single"}}
     },
     {
-      "id":6,"type":"timeseries","title":"Render latency","gridPos":{"h":8,"w":12,"x":12,"y":5},"datasource":{"type":"prometheus","uid":"prometheus"},
-      "targets":[{"refId":"A","expr":"render_scene_duration_seconds{production_id=\"$production\"}","legendFormat":"Average scene duration"}],
+      "id":6,"type":"timeseries","title":"Current vs required trailer throughput","gridPos":{"h":8,"w":12,"x":12,"y":5},"datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"refId":"A","expr":"render_current_throughput_frames_per_hour{production_id=\"$production\"}","legendFormat":"Current"},{"refId":"B","expr":"render_required_throughput_frames_per_hour{production_id=\"$production\"}","legendFormat":"Required"}],
       "fieldConfig":{"defaults":{"unit":"s","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","fillOpacity":12,"lineInterpolation":"smooth","lineWidth":2,"showPoints":"never"}},"overrides":[]},
       "options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"single"}}
     },
@@ -97,7 +97,7 @@
   "refresh":"5s",
   "schemaVersion":41,
   "tags":["ai-production-director","render-farm","demo"],
-  "templating":{"list":[{"name":"production","label":"Production","type":"query","datasource":{"type":"prometheus","uid":"prometheus"},"query":{"query":"label_values(render_queue_depth, production_id)","refId":"VariableQuery"},"definition":"label_values(render_queue_depth, production_id)","current":{"text":"neon-horizon-trailer","value":"neon-horizon-trailer"},"refresh":1,"sort":1}]},
+  "templating":{"list":[{"name":"production","label":"Production","type":"query","datasource":{"type":"prometheus","uid":"prometheus"},"query":{"query":"label_values(render_queue_depth_frames, production_id)","refId":"VariableQuery"},"definition":"label_values(render_queue_depth_frames, production_id)","current":{"text":"project-nova","value":"project-nova"},"refresh":1,"sort":1}]},
   "time":{"from":"now-30m","to":"now"},
   "timezone":"browser",
   "title":"AI Production Director",

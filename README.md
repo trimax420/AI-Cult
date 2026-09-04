@@ -1,122 +1,120 @@
-# AI Production Director
+# AI Production Director — Project Nova
 
-Groundwork for an observability-driven agent that translates render-farm failures into production deadline impact and human-approved recovery options.
+Hackathon demo in which a GPU out-of-memory failure on trailer-critical Scene 87 is investigated through Grafana telemetry, translated into deterministic deadline and cost impact, recovered after human approval, and verified from fresh observability data.
 
-## What is included
+## Architecture
 
-- Grafana's local LGTM stack: Grafana, Prometheus, Loki, Tempo, Pyroscope, and an OpenTelemetry Collector.
-- A FastAPI render-farm simulator emitting correlated OpenTelemetry metrics, logs, and traces.
-- A broad incident library spanning GPU, workers, scheduler, storage, network, assets, dependencies, licensing, cost, deadline risk, and recovery.
-- Domain telemetry for queue depth, GPU workers, memory pressure, render duration, predicted delay, retries, recovery progress, and added cost.
+`Render simulator → OpenTelemetry → Grafana/LGTM → Grafana MCP → Gemini ADK agent → deterministic impact calculator → human approval → recovery → verification`
 
-## Run locally
+The repository contains:
+
+- A FastAPI simulation of Project Nova, two deliverables, 20 virtual GPU workers, 20 scenes, frame queues, costs, and trailer-critical scheduling.
+- Deterministic Python ETA, throughput, delay, recovery-cost, and cost-avoided calculations.
+- Correlated metrics, structured Scene 87 CUDA OOM logs, and traces exported to the local Grafana LGTM stack.
+- Four explicit product states: `ON_TRACK`, `INVESTIGATING`, `DECISION_REQUIRED`, and `PRODUCTION_SAVED`.
+- Single-use, expiring approval IDs and four distinct recovery actions.
+- A Google ADK/Gemini agent with an optional Grafana MCP toolset and a clearly labeled local fallback.
+
+## Run fully locally (no accounts or API keys)
 
 Requirements: Docker Desktop with Docker Compose.
 
-```powershell
+```bash
 docker compose up --build
 ```
 
 Open:
 
+- Product interface: http://localhost:4173
 - Grafana: http://localhost:3000 (`admin` / `admin`)
-- Simulator state: http://localhost:8080/state
-- Simulator API docs: http://localhost:8080/docs
-- Operator dashboard: http://localhost:4173
+- Simulator API: http://localhost:8080/docs
 
-## Three-minute demo sequence
+If port 8080 is already occupied, start with `SIMULATOR_PORT=18080 docker compose up --build` and open the simulator API on port 18080. The dashboard continues to work through the internal Compose network.
 
-Start from the healthy baseline:
+The interface contains reset and GPU OOM controls. The complete story runs without cloud credentials using the clearly labeled `mock-fallback` investigation mode. All deadline, ETA, cost, approval, scheduling, telemetry, and verification behavior is real local code; only the natural-language investigation is scripted in this mode.
 
-```powershell
-Invoke-RestMethod -Method Post http://localhost:8080/scenario/healthy
+## Real Gemini + local Grafana MCP
+
+The default agent profile runs every application component locally while authenticating Gemini through Vertex AI with your local Application Default Credentials. It does **not** deploy Cloud Run, Agent Engine, Artifact Registry, or Grafana Cloud resources. Grafana MCP runs as another local container and authenticates to local Grafana with development credentials.
+
+Authenticate once and enable Vertex AI for the project:
+
+```bash
+gcloud auth application-default login
+gcloud services enable aiplatform.googleapis.com --project=project-f5be723f-d87a-4652-b84
 ```
 
-Trigger the GPU memory incident:
+Run the ADK service with the optional Compose profile:
 
-```powershell
-Invoke-RestMethod -Method Post http://localhost:8080/scenario/gpu_oom
+```bash
+docker compose --profile agent up --build
 ```
 
-The expected signals are rising `render.queue.depth`, `render.scene.duration`, `render.gpu.memory.utilization`, retries and logs containing `CUDA out of memory`. The `render.predicted.delay` gauge converts degradation into minutes late.
+Open the local ADK playground at http://localhost:8090 and select `production_director_agent`. Local Grafana MCP is available at http://localhost:8000/mcp. Its instructions enforce:
 
-Approve the recommended recovery plan:
+`Detect → Investigate → Correlate → Diagnose → Calculate → Recommend → Approve → Execute → Verify`
 
-```powershell
-Invoke-RestMethod -Method Post http://localhost:8080/scenario/recovering
+Grafana MCP must supply metric, Scene 87 log, and correlated trace evidence. The model cannot calculate delivery or cost estimates, invent recovery actions, or execute without a human-provided approval ID.
+
+The product dashboard starts the real agent automatically after incident injection and continues the same ADK session after approval. To control cost, the demo exposes only three narrow, read-only Grafana MCP evidence tools, caps each model response at 900 tokens, and performs no background LLM polling. A normal demo uses two agent runs: investigation and post-approval recovery verification.
+
+To exercise the story in the playground, reset/start the simulation from the product interface, inject the OOM, then ask: `Investigate Project Nova, calculate the delivery impact, and recommend recovery options. Do not execute anything without my approval.` When it requests approval, approve the chosen option in the product interface or provide the single-use approval ID explicitly.
+
+### Local modes at a glance
+
+| Mode | Command | External dependency |
+|---|---|---|
+| Complete product story with deterministic fallback | `docker compose up --build` | None |
+| Gemini agent + local Grafana MCP | `docker compose --profile agent up --build` | Vertex AI API through local ADC |
+
+To use Google AI Studio instead, set `GOOGLE_GENAI_USE_VERTEXAI=FALSE` and provide `GEMINI_API_KEY`.
+
+## Main API
+
+```text
+POST /simulation/start
+POST /simulation/reset
+POST /simulation/incidents/gpu-oom
+GET  /simulation/status
+GET  /simulation/workers
+GET  /production/context
+GET  /impact
+GET  /metrics
+
+POST /approvals?action=prioritize-scenes
+POST /recovery/add-workers
+POST /recovery/prioritize-scenes
+POST /recovery/restart-workers
+POST /recovery/reduce-preview-quality
 ```
 
-The simulator drains the queue and returns the delivery forecast inside the deadline. Reset the demo at any time:
+Recovery requests use this body:
 
-```powershell
-Invoke-RestMethod -Method Post http://localhost:8080/reset
+```json
+{"approval_id":"single-use-id","approved_by":"operator-name"}
 ```
 
-## Available conditions
+The previous `/state`, `/reset`, `/scenario/gpu_oom`, `/diagnosis`, `/recovery-plans`, and approval endpoint remain as compatibility adapters for the dashboard.
 
-Open `http://localhost:8080/scenarios` for the machine-readable catalog. Trigger any entry with:
+## Three-minute demo
 
-```powershell
-Invoke-RestMethod -Method Post http://localhost:8080/scenario/<condition>
+1. Show Project Nova in **Production on Track**.
+2. Select **Inject GPU OOM**. Eight workers fail while rendering Scene 87.
+3. Watch the investigation progress through metrics, logs, traces, and deterministic impact calculation.
+4. At **Decision Required**, approve **Prioritize trailer scenes** ($17, medium risk).
+5. Watch critical frames move ahead of full-film work and recovery progress reach 100%.
+6. Finish on **Production Saved — Trailer delivery protected.** and show the Grafana evidence.
+
+## Verification
+
+```bash
+python3 -m unittest discover -s simulator -p 'test_*.py' -v
+cd operator-dashboard
+npm ci
+npm run build
+npm run lint
 ```
 
-Conditions: `healthy`, `queue_surge`, `gpu_oom`, `gpu_overheating`, `worker_loss`,
-`render_stalled`, `storage_slow`, `storage_full`, `network_latency`, `asset_corruption`,
-`dependency_down`, `license_failure`, `cost_overrun`, `deadline_risk`, `recovering`, and
-`recovered`.
+## Cloud deployment boundary
 
-## Grafana alerts
-
-Provision the six baseline incident rules with:
-
-```powershell
-.\grafana\alerting\provision-alerts.ps1
-```
-
-The rules cover deadline risk, GPU memory exhaustion, worker capacity loss, storage
-exhaustion, asset corruption, and critical dependency outages. They are grouped under
-**AI Production Alerts / Render Farm Incidents** in Grafana Alerting.
-
-## Diagnosis and human-approved recovery
-
-The simulator exposes a first decision workflow:
-
-- `GET /diagnosis` — root cause, severity, evidence, confidence, and deadline impact.
-- `GET /telemetry-history` — recent GPU-memory and queue samples for operator charts.
-- `GET /recovery-plans` — ranked scenario-specific options with time, cost, and risk.
-- `POST /recovery-plans/{plan_id}/approve?approved_by=<name>` — approve and execute a plan.
-- `GET /audit-log` — immutable-in-process record of scenario and approval events.
-
-Example:
-
-```powershell
-Invoke-RestMethod -Method Post http://localhost:8080/scenario/gpu_oom
-Invoke-RestMethod http://localhost:8080/diagnosis
-Invoke-RestMethod http://localhost:8080/recovery-plans
-Invoke-RestMethod -Method Post "http://localhost:8080/recovery-plans/restart_gpu_workers/approve?approved_by=govind"
-```
-
-## Useful telemetry
-
-| Signal | Meaning |
-| --- | --- |
-| `render.queue.depth` | Jobs waiting for GPU capacity |
-| `render.gpu.workers.active` | Healthy workers in pool B |
-| `render.gpu.memory.utilization` | GPU memory pressure percentage |
-| `render.scene.duration` | Current average scene render time |
-| `render.predicted.delay` | Minutes early (negative) or late (positive) |
-| `render.retries` | Scene retries, tagged with failure type |
-| `render.recovery.progress` | Execution progress for the approved plan |
-| `render.cost.added` | Incremental cost of recovery |
-| `render.storage.utilization` | Storage pressure percentage |
-| `render.network.latency` | Render-network latency in milliseconds |
-| `render.asset.error.rate` | Percentage of assets failing validation |
-| `render.cost.estimated` | Current estimated production cost |
-| `render.condition` | Active scenario with severity and component labels |
-
-## Next foundation steps
-
-1. Provision a Grafana dashboard and alert rules around the telemetry above.
-2. Connect Grafana MCP and implement the diagnosis/recovery agent.
-3. Add a recovery-plan API with human approval and an audit log.
-4. Instrument agent MCP calls, latency, traces, and token usage.
+The local vertical slice is complete. Actual Vertex AI Agent Engine, Cloud Run, Artifact Registry, Secret Manager, and Grafana Cloud deployment require the target Google Cloud and Grafana accounts; no infrastructure is created automatically by this repository.

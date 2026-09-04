@@ -1,6 +1,6 @@
 [
   {
-    "title": "GPU memory exhaustion",
+    "title": "Project Nova GPU memory exhaustion",
     "expression": "render_gpu_memory_utilization_percent > 95",
     "for": "20s",
     "severity": "critical",
@@ -9,22 +9,22 @@
     "description": "GPU memory utilization exceeded 95%, indicating likely CUDA OOM risk."
   },
   {
-    "title": "Production deadline at risk",
-    "expression": "render_predicted_delay_minutes > 0",
+    "title": "Project Nova trailer throughput below required rate",
+    "expression": "render_current_throughput_frames_per_hour < render_required_throughput_frames_per_hour and deriv(render_queue_critical_depth_frames[30s]) > 0",
     "for": "30s",
     "severity": "critical",
     "component": "delivery",
-    "summary": "Production is forecast to miss its deadline",
-    "description": "The delivery forecast is now late. Investigate the active render condition and approve a recovery plan."
+    "summary": "Trailer throughput is below the required rate while its queue grows",
+    "description": "Project Nova's trailer-critical queue is growing faster than available render throughput. Investigate Scene 87 and approve a recovery plan."
   },
   {
     "title": "Render worker capacity loss",
-    "expression": "render_gpu_workers_active < 150",
+    "expression": "render_gpu_workers_active < 20",
     "for": "20s",
     "severity": "critical",
     "component": "workers",
     "summary": "Available GPU worker capacity has dropped",
-    "description": "Fewer than 150 GPU workers are active, putting throughput and delivery at risk."
+    "description": "Fewer than 20 Project Nova GPU workers are active, putting trailer throughput at risk."
   },
   {
     "title": "Storage capacity exhausted",

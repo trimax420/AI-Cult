@@ -3,9 +3,9 @@ services:
     image: grafana/otel-lgtm:latest
     container_name: ai-production-lgtm
     ports:
-      - "3000:3000"
-      - "4317:4317"
-      - "4318:4318"
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
     volumes:
       - lgtm-data:/data
     environment:
@@ -24,10 +24,19 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4317
       OTEL_SERVICE_NAME: render-farm-simulator
       SIM_TICK_SECONDS: "2"
-      PRODUCTION_ID: neon-horizon-trailer
-      DELIVERY_DEADLINE_MINUTES: "360"
+      PRODUCTION_ID: project-nova
     ports:
-      - "8080:8080"
+      - "127.0.0.1:${SIMULATOR_PORT:-8080}:8080"
+    depends_on:
+      lgtm:
+        condition: service_healthy
+
+  grafana-provisioner:
+    build:
+      context: ./grafana
+    restart: "no"
+    environment:
+      GRAFANA_URL: http://lgtm:3000
     depends_on:
       lgtm:
         condition: service_healthy
@@ -37,9 +46,65 @@ services:
       context: ./operator-dashboard
     container_name: ai-production-operator-dashboard
     ports:
-      - "4173:80"
+      - "127.0.0.1:4173:80"
     depends_on:
       - render-simulator
+
+  grafana-mcp:
+    profiles: ["agent"]
+    image: grafana/mcp-grafana:latest
+    container_name: ai-production-grafana-mcp
+    command:
+      - --transport
+      - streamable-http
+      - --address
+      - 0.0.0.0:8000
+      - --allowed-hosts
+      - grafana-mcp:8000,localhost:8000,127.0.0.1:8000
+      - --metrics
+    environment:
+      GRAFANA_URL: http://lgtm:3000
+      GRAFANA_USERNAME: admin
+      GRAFANA_PASSWORD: admin
+      GRAFANA_ORG_ID: "1"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_SERVICE_NAME: grafana-mcp
+      MCP_GRAFANA_SERVER_TOKEN: ${GRAFANA_MCP_AUTH_TOKEN:-local-demo-mcp-token}
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      lgtm:
+        condition: service_healthy
+
+  production-director-agent:
+    profiles: ["agent"]
+    build:
+      context: .
+      dockerfile: production_director_agent/Dockerfile
+    container_name: ai-production-director-agent
+    environment:
+      SIMULATOR_URL: http://render-simulator:8080
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_GENAI_USE_VERTEXAI: ${GOOGLE_GENAI_USE_VERTEXAI:-TRUE}
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-project-f5be723f-d87a-4652-b84}
+      GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION:-asia-south1}
+      GOOGLE_APPLICATION_CREDENTIALS: /var/secrets/google/application_default_credentials.json
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GRAFANA_MCP_URL: ${GRAFANA_MCP_URL:-http://grafana-mcp:8000/mcp}
+      GRAFANA_MCP_AUTH_TOKEN: ${GRAFANA_MCP_AUTH_TOKEN:-local-demo-mcp-token}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_SERVICE_NAME: production-director-agent
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - ${HOME}/.config/gcloud/application_default_credentials.json:/var/secrets/google/application_default_credentials.json:ro
+    depends_on:
+      - render-simulator
+      - grafana-mcp
 
 volumes:
   lgtm-data:
