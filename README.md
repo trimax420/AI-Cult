@@ -1,120 +1,218 @@
 # AI Production Director — Project Nova
 
-Hackathon demo in which a GPU out-of-memory failure on trailer-critical Scene 87 is investigated through Grafana telemetry, translated into deterministic deadline and cost impact, recovered after human approval, and verified from fresh observability data.
+AI Production Director is a hackathon demo for operating a simulated film render farm. It turns observability evidence into a production decision:
+
+> Scene 87 is failing with GPU memory exhaustion. The trailer will miss delivery unless an operator approves recovery.
+
+The app monitors a local render-farm simulator, investigates metrics, logs, and traces in Grafana, calculates deadline and cost impact with deterministic Python code, requires human approval for recovery, and verifies the outcome.
+
+## What is included
+
+- **Project Nova simulator**: 20 virtual GPU workers, trailer and full-film deliverables, trailer-critical scenes, render queues, costs, retries, and deterministic ETA calculations.
+- **Primary incident**: GPU OOM on trailer-critical **Scene 87**.
+- **Additional demo paths**: corrupted asset on Scene 94, recovery verification failure, and a non-mutating what-if calculator.
+- **Local observability**: OpenTelemetry, Grafana, Prometheus, Loki, and Tempo through `grafana/otel-lgtm`.
+- **Operator dashboard**: `ON_TRACK → INVESTIGATING → DECISION_REQUIRED → PRODUCTION_SAVED`.
+- **Approval protection**: every recovery action needs a valid, short-lived, single-use approval ID.
+- **Optional real agent**: Google ADK + Gemini queries local Grafana MCP for Prometheus, Loki, and Tempo evidence.
 
 ## Architecture
 
-`Render simulator → OpenTelemetry → Grafana/LGTM → Grafana MCP → Gemini ADK agent → deterministic impact calculator → human approval → recovery → verification`
+```text
+Render simulator → OpenTelemetry → Local Grafana LGTM
+                                      ↓
+Operator dashboard ← deterministic impact calculator ← Grafana MCP ← Gemini ADK
+        ↓                                                          ↓
+Human approval → recovery API → simulator → fresh Grafana verification
+```
 
-The repository contains:
+## Quick start: fully local demo
 
-- A FastAPI simulation of Project Nova, two deliverables, 20 virtual GPU workers, 20 scenes, frame queues, costs, and trailer-critical scheduling.
-- Deterministic Python ETA, throughput, delay, recovery-cost, and cost-avoided calculations.
-- Correlated metrics, structured Scene 87 CUDA OOM logs, and traces exported to the local Grafana LGTM stack.
-- Four explicit product states: `ON_TRACK`, `INVESTIGATING`, `DECISION_REQUIRED`, and `PRODUCTION_SAVED`.
-- Single-use, expiring approval IDs and four distinct recovery actions.
-- A Google ADK/Gemini agent with an optional Grafana MCP toolset and a clearly labeled local fallback.
-
-## Run fully locally (no accounts or API keys)
-
-Requirements: Docker Desktop with Docker Compose.
+This mode needs only Docker Desktop. It uses the clearly labelled `mock-fallback` investigation path, so it does not require Google Cloud, Gemini, or API keys.
 
 ```bash
+git clone https://github.com/trimax420/AI-Cult.git
+cd AI-Cult
 docker compose up --build
 ```
 
 Open:
 
-- Product interface: http://localhost:4173
-- Grafana: http://localhost:3000 (`admin` / `admin`)
-- Simulator API: http://localhost:8080/docs
+| Service | URL | Credentials |
+|---|---|---|
+| Product dashboard | http://localhost:4173 | None |
+| Grafana | http://localhost:3000 | `admin` / `admin` |
+| Simulator API docs | http://localhost:8080/docs | None |
 
-If port 8080 is already occupied, start with `SIMULATOR_PORT=18080 docker compose up --build` and open the simulator API on port 18080. The dashboard continues to work through the internal Compose network.
+If port `8080` is unavailable:
 
-The interface contains reset and GPU OOM controls. The complete story runs without cloud credentials using the clearly labeled `mock-fallback` investigation mode. All deadline, ETA, cost, approval, scheduling, telemetry, and verification behavior is real local code; only the natural-language investigation is scripted in this mode.
+```bash
+SIMULATOR_PORT=18080 docker compose up --build
+```
+
+The dashboard continues to use the Compose network automatically; only the simulator API moves to `http://localhost:18080/docs`.
+
+Stop the stack with:
+
+```bash
+docker compose down
+```
+
+To remove local Grafana data as well:
+
+```bash
+docker compose down -v
+```
+
+## Run the three-minute demo
+
+1. Open http://localhost:4173 and show **Production on Track**.
+2. Click **Demo Mode** or **GPU OOM**.
+3. The simulator makes Scene 87 fail, drops healthy capacity, raises GPU-memory pressure, and moves the trailer ETA behind schedule.
+4. Watch the investigation show metric, log, trace, correlation, and deterministic impact steps.
+5. At **Decision Required**, review the recovery options. **Prioritize trailer scenes** is the recommended demo action: `$17`, medium risk, on-time result.
+6. Click **Approve option**, then **Approve and execute**. The approval is audited and consumed once.
+7. Watch recovery progress and the before/after verification card.
+8. Finish on **Production Saved — Trailer delivery protected.**
+
+Useful alternate paths:
+
+- **Corrupt Asset** injects a checksum failure for `nova_city.exr` on Scene 94.
+- **Simulate failed recovery** appears at decision time and makes the next approved action return to a visible failed-verification decision state.
+- **Production what-if lab** compares worker count, deadline, preview quality, and scene prioritization without changing the live simulator.
 
 ## Real Gemini + local Grafana MCP
 
-The default agent profile runs every application component locally while authenticating Gemini through Vertex AI with your local Application Default Credentials. It does **not** deploy Cloud Run, Agent Engine, Artifact Registry, or Grafana Cloud resources. Grafana MCP runs as another local container and authenticates to local Grafana with development credentials.
+This keeps the application and observability stack local. Gemini is the only external dependency when enabled; nothing is deployed to Cloud Run, Agent Engine, Artifact Registry, Secret Manager, or Grafana Cloud.
 
-Authenticate once and enable Vertex AI for the project:
+### 1. Authenticate locally with Google Cloud
+
+Use a Google Cloud project with Vertex AI enabled:
 
 ```bash
 gcloud auth application-default login
-gcloud services enable aiplatform.googleapis.com --project=project-f5be723f-d87a-4652-b84
+gcloud services enable aiplatform.googleapis.com --project=YOUR_PROJECT_ID
 ```
 
-Run the ADK service with the optional Compose profile:
+Create `.env` from the example and set your project values:
+
+```bash
+cp .env.example .env
+```
+
+```dotenv
+GOOGLE_GENAI_USE_VERTEXAI=TRUE
+GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
+GOOGLE_CLOUD_LOCATION=asia-south1
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+### 2. Start the agent profile
 
 ```bash
 docker compose --profile agent up --build
 ```
 
-Open the local ADK playground at http://localhost:8090 and select `production_director_agent`. Local Grafana MCP is available at http://localhost:8000/mcp. Its instructions enforce:
+Additional local endpoints:
 
-`Detect → Investigate → Correlate → Diagnose → Calculate → Recommend → Approve → Execute → Verify`
+| Service | URL |
+|---|---|
+| ADK playground | http://localhost:8090 |
+| Grafana MCP | http://localhost:8000/mcp |
 
-Grafana MCP must supply metric, Scene 87 log, and correlated trace evidence. The model cannot calculate delivery or cost estimates, invent recovery actions, or execute without a human-provided approval ID.
+When you inject **GPU OOM** in the product dashboard, the dashboard starts the ADK agent. The agent must query Grafana MCP for:
 
-The product dashboard starts the real agent automatically after incident injection and continues the same ADK session after approval. To control cost, the demo exposes only three narrow, read-only Grafana MCP evidence tools, caps each model response at 900 tokens, and performs no background LLM polling. A normal demo uses two agent runs: investigation and post-approval recovery verification.
+1. Prometheus throughput, queue, and GPU-memory evidence.
+2. The matching Scene 87 CUDA OOM log from Loki.
+3. The `incident.gpu_oom` trace from Tempo.
 
-To exercise the story in the playground, reset/start the simulation from the product interface, inject the OOM, then ask: `Investigate Project Nova, calculate the delivery impact, and recommend recovery options. Do not execute anything without my approval.` When it requests approval, approve the chosen option in the product interface or provide the single-use approval ID explicitly.
+It then uses deterministic API tools for impact and recovery recommendations. The agent cannot invent costs or ETAs, execute a non-allowlisted action, or execute without the approval ID supplied by the operator.
 
-### Local modes at a glance
+To control Gemini spend, one normal demo uses two focused agent runs: investigation and post-recovery verification. There is no background LLM polling.
 
-| Mode | Command | External dependency |
-|---|---|---|
-| Complete product story with deterministic fallback | `docker compose up --build` | None |
-| Gemini agent + local Grafana MCP | `docker compose --profile agent up --build` | Vertex AI API through local ADC |
+### Google AI Studio alternative
 
-To use Google AI Studio instead, set `GOOGLE_GENAI_USE_VERTEXAI=FALSE` and provide `GEMINI_API_KEY`.
+If you prefer an API key instead of Vertex AI, set the following in `.env`:
 
-## Main API
-
-```text
-POST /simulation/start
-POST /simulation/reset
-POST /simulation/incidents/gpu-oom
-GET  /simulation/status
-GET  /simulation/workers
-GET  /production/context
-GET  /impact
-GET  /metrics
-
-POST /approvals?action=prioritize-scenes
-POST /recovery/add-workers
-POST /recovery/prioritize-scenes
-POST /recovery/restart-workers
-POST /recovery/reduce-preview-quality
+```dotenv
+GOOGLE_GENAI_USE_VERTEXAI=FALSE
+GEMINI_API_KEY=your_key_here
 ```
 
-Recovery requests use this body:
+## API guide
 
-```json
-{"approval_id":"single-use-id","approved_by":"operator-name"}
-```
+The interactive API reference is available at `/docs` on the simulator port.
 
-The previous `/state`, `/reset`, `/scenario/gpu_oom`, `/diagnosis`, `/recovery-plans`, and approval endpoint remain as compatibility adapters for the dashboard.
-
-## Three-minute demo
-
-1. Show Project Nova in **Production on Track**.
-2. Select **Inject GPU OOM**. Eight workers fail while rendering Scene 87.
-3. Watch the investigation progress through metrics, logs, traces, and deterministic impact calculation.
-4. At **Decision Required**, approve **Prioritize trailer scenes** ($17, medium risk).
-5. Watch critical frames move ahead of full-film work and recovery progress reach 100%.
-6. Finish on **Production Saved — Trailer delivery protected.** and show the Grafana evidence.
-
-## Verification
+### Simulation controls
 
 ```bash
-python3 -m unittest discover -s simulator -p 'test_*.py' -v
+curl -X POST http://localhost:8080/simulation/start
+curl -X POST http://localhost:8080/simulation/reset
+curl -X POST http://localhost:8080/simulation/incidents/gpu-oom
+curl -X POST http://localhost:8080/simulation/incidents/corrupted-asset
+curl http://localhost:8080/simulation/status
+curl http://localhost:8080/simulation/workers
+```
+
+### Evidence and planning
+
+```bash
+curl http://localhost:8080/impact
+curl http://localhost:8080/recovery-plans
+curl http://localhost:8080/audit-log
+curl http://localhost:8080/verification/comparison
+```
+
+Example what-if calculation:
+
+```bash
+curl -X POST http://localhost:8080/impact/what-if \
+  -H 'Content-Type: application/json' \
+  -d '{"workers_added":2,"deadline_minutes":90,"quality_percent":82,"prioritize_critical":true}'
+```
+
+### Human-approved recovery
+
+First request a single-use approval ID:
+
+```bash
+curl -X POST 'http://localhost:8080/approvals?action=prioritize-scenes'
+```
+
+Then execute only the matching allowlisted recovery action:
+
+```bash
+curl -X POST http://localhost:8080/recovery/prioritize-scenes \
+  -H 'Content-Type: application/json' \
+  -d '{"approval_id":"APPROVAL_ID","approved_by":"demo-operator"}'
+```
+
+Available actions are:
+
+- `add-workers`
+- `prioritize-scenes`
+- `restart-workers`
+- `reduce-preview-quality`
+
+`take-no-action` is only a comparison option and is never executable.
+
+## Tests and quality checks
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/ai-cult-pycache \
+  python3 -m unittest discover -s simulator -p 'test_*.py' -v
+
 cd operator-dashboard
 npm ci
 npm run build
 npm run lint
 ```
 
-## Cloud deployment boundary
+The Python tests cover Project Nova scheduling, deterministic impact calculations, Scene 87 and Scene 94 telemetry behavior, approval expiry/replay protection, prioritization, what-if isolation, recovery failure, and verification.
 
-The local vertical slice is complete. Actual Vertex AI Agent Engine, Cloud Run, Artifact Registry, Secret Manager, and Grafana Cloud deployment require the target Google Cloud and Grafana accounts; no infrastructure is created automatically by this repository.
+## Important boundaries
+
+- The default local mode works without a Google account.
+- Google Cloud is used only for Gemini/Vertex AI in the optional agent mode.
+- This is a hackathon simulator: no real compute workers, tenant isolation, user authentication, or production infrastructure mutations are performed.
+- Do not commit `.env`, API keys, or Google credentials.
