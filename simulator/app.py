@@ -67,6 +67,31 @@ meter.create_observable_gauge("render.predicted.delay", callbacks=[impact_observ
 meter.create_observable_gauge("render.recovery.progress", callbacks=[lambda _: [metrics.Observation(engine.status()["recovery_progress"], {"production.id": "project-nova"})]], unit="%")
 
 
+def production_metric(value):
+    def callback(_):
+        state = engine.status()
+        return [metrics.Observation(value(state), {"production.id": "project-nova"})]
+    return callback
+
+
+meter.create_observable_gauge("render.storage.utilization", callbacks=[production_metric(lambda _: 61)], unit="%")
+meter.create_observable_gauge("render.network.latency", callbacks=[production_metric(lambda _: 12)], unit="ms")
+meter.create_observable_gauge("render.asset.error.rate", callbacks=[production_metric(lambda state: 18 if state["scenario"] == "corrupted_asset" else 0)], unit="%")
+meter.create_observable_gauge("render.cost.estimated", callbacks=[production_metric(lambda state: state["impact"]["baseline_cost_usd"])], unit="USD")
+meter.create_observable_gauge("render.failures", callbacks=[production_metric(lambda _: engine.production.scenes["SC-87"].failed_frames)], unit="{failure}")
+
+
+def condition_observation(_):
+    state = engine.status()
+    scenario = state["scenario"]
+    return [metrics.Observation(1, {"production.id": "project-nova", "scenario": scenario,
+                                    "severity": "critical" if state["incident_active"] else "normal",
+                                    "component": "gpu" if scenario == "gpu_oom" else "pipeline"})]
+
+
+meter.create_observable_gauge("render.condition", callbacks=[condition_observation], unit="1")
+
+
 class RecoveryRequest(BaseModel):
     approval_id: str
     approved_by: str = "operator-dashboard"

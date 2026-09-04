@@ -10,7 +10,7 @@
   },
   {
     "title": "Project Nova trailer throughput below required rate",
-    "expression": "render_current_throughput_frames_per_hour < render_required_throughput_frames_per_hour and deriv(render_queue_critical_depth_frames[30s]) > 0",
+    "expression": "render_current_throughput_per_hour < render_required_throughput_per_hour and deriv(render_queue_critical_depth[30s]) > 0",
     "for": "30s",
     "severity": "critical",
     "component": "delivery",
