@@ -22,7 +22,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel
 
-from domain import ProductionEngine, RECOVERY_SPECS, calculate_delivery_impact, calculate_what_if
+from domain import ProductionEngine, RECOVERY_SPECS, calculate_delivery_impact, calculate_recovery_option, calculate_what_if
 
 SERVICE_NAME = os.getenv("OTEL_SERVICE_NAME", "render-farm-simulator")
 OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
@@ -225,14 +225,20 @@ def investigation():
 
 def recovery_options() -> list[dict]:
     delay = engine.status()["impact"]["projected_delay_minutes"]
-    options = [{"plan_id": action, "title": spec["title"], "estimated_added_cost_usd": spec["cost"],
-                "risk": spec["risk"], "deadline_result": "On time", "recommended": action == "prioritize-scenes",
-                "requires_approval": True,
-                "rationale": ({"add-workers": "Buys capacity without changing creative priorities.",
-                               "prioritize-scenes": "Protects every trailer-critical frame for the lowest practical cost.",
-                               "restart-workers": "Restores capacity quickly, but the original fault may recur.",
-                               "reduce-preview-quality": "Meets the deadline by trading preview fidelity for speed."}[action])}
-               for action, spec in RECOVERY_SPECS.items()]
+    rationale = {"add-workers": "Adds elastic capacity without changing creative priorities.",
+                 "prioritize-scenes": "Moves full-film-only work behind the trailer-critical queue.",
+                 "restart-workers": "Restores failed capacity, but the original fault could recur.",
+                 "reduce-preview-quality": "Trades preview fidelity for fewer frames to render."}
+    candidates = []
+    for action, spec in RECOVERY_SPECS.items():
+        projection = calculate_recovery_option(engine.production, action)
+        candidates.append({"plan_id": action, "title": spec["title"], "risk": spec["risk"],
+                           "requires_approval": True, "rationale": rationale[action], **projection})
+    on_time = [option for option in candidates if option["projected_delay_minutes"] == 0]
+    recommended_id = min(on_time or candidates, key=lambda option: option["estimated_added_cost_usd"])["plan_id"]
+    options = [{**option, "recommended": option["plan_id"] == recommended_id,
+                "recommendation_source": "deterministic-calculator" if option["plan_id"] == recommended_id else None}
+               for option in candidates]
     options.append({"plan_id": "take-no-action", "title": "Take no action", "estimated_added_cost_usd": 0,
                     "risk": "high", "deadline_result": f"{int(delay // 60)}h {int(delay % 60)}m late",
                     "recommended": False, "requires_approval": False,

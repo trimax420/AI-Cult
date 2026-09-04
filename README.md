@@ -70,7 +70,7 @@ docker compose down -v
 2. Click **Demo Mode** or **GPU OOM**.
 3. The simulator makes Scene 87 fail, drops healthy capacity, raises GPU-memory pressure, and moves the trailer ETA behind schedule.
 4. Watch the investigation show metric, log, trace, correlation, and deterministic impact steps.
-5. At **Decision Required**, review the recovery options. **Prioritize trailer scenes** is the recommended demo action: `$17`, medium risk, on-time result.
+5. At **Decision Required**, review the live recovery projections. Each option's ETA and cost are recalculated from the current queue and worker capacity. With ADK enabled, Gemini ranks the allowlisted options from Grafana evidence and is labelled **Gemini recommended**; otherwise the deterministic calculator provides a clearly labelled fallback.
 6. Click **Approve option**, then **Approve and execute**. The approval is audited and consumed once.
 7. Watch recovery progress and the before/after verification card.
 8. Finish on **Production Saved — Trailer delivery protected.**
@@ -126,7 +126,7 @@ When you inject **GPU OOM** in the product dashboard, the dashboard starts the A
 2. The matching Scene 87 CUDA OOM log from Loki.
 3. The `incident.gpu_oom` trace from Tempo.
 
-It then uses deterministic API tools for impact and recovery recommendations. The agent cannot invent costs or ETAs, execute a non-allowlisted action, or execute without the approval ID supplied by the operator.
+It then ranks the live, deterministic recovery projections and returns one allowlisted recommendation to the dashboard. The agent cannot invent costs or ETAs, execute a non-allowlisted action, or execute without the approval ID supplied by the operator. The dashboard always executes an approved action through the recovery API first, so an unavailable agent cannot block the human-approved recovery; ADK then performs post-recovery verification when available.
 
 To control Gemini spend, one normal demo uses two focused agent runs: investigation and post-recovery verification. There is no background LLM polling.
 

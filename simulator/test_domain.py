@@ -1,7 +1,7 @@
 import unittest
 from datetime import timedelta
 
-from domain import ProductionEngine, calculate_delivery_impact, calculate_what_if, utcnow
+from domain import ProductionEngine, calculate_delivery_impact, calculate_recovery_option, calculate_what_if, utcnow
 
 
 class ProjectNovaTests(unittest.TestCase):
@@ -66,6 +66,25 @@ class ProjectNovaTests(unittest.TestCase):
         self.assertGreater(recovery["projected_throughput_fph"], baseline["projected_throughput_fph"])
         self.assertLess(recovery["projected_delay_minutes"], baseline["projected_delay_minutes"])
         self.assertEqual(len(engine.production.workers), worker_count)
+
+    def test_telemetry_history_is_seeded_and_changes_on_live_ticks(self):
+        engine = ProductionEngine()
+        self.assertEqual(len(engine.history), 72)
+        seeded_memory = {point["gpu_memory_utilization"] for point in engine.history}
+        self.assertGreater(len(seeded_memory), 10)
+        before = engine.history[-1]["queue_depth"]
+        engine.tick()
+        self.assertLess(engine.history[-1]["queue_depth"], before)
+
+    def test_recovery_projection_is_live_and_does_not_mutate_production(self):
+        engine = ProductionEngine()
+        engine.inject_gpu_oom()
+        worker_count = len(engine.production.workers)
+        prioritize = calculate_recovery_option(engine.production, "prioritize-scenes")
+        no_action = calculate_delivery_impact(engine.production)
+        self.assertEqual(len(engine.production.workers), worker_count)
+        self.assertEqual(prioritize["deadline_result"], "On time")
+        self.assertLess(prioritize["projected_delay_minutes"], no_action["projected_delay_minutes"])
 
     def test_failed_recovery_returns_to_decision_and_records_verification_failure(self):
         engine = ProductionEngine()

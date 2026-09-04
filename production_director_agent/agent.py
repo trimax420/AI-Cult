@@ -86,7 +86,9 @@ Scene 87 CUDA OOM log, and correlated Tempo trace ID.
 Use calculate_delivery_impact for every ETA or cost; never estimate those values yourself. Recommend
 only returned allowlisted actions. Never call execute_recovery without a human-provided approval ID.
 After execution, query metrics, logs, and traces once more and call verify_recovery before declaring
-production saved. Keep the final response below 350 words and state that evidence came through Grafana MCP.""",
+production saved. When asked to recommend, choose the best action from the live tool results and end
+with exactly `recommendation_action=<allowlisted action id>`. Keep the final response below 350 words
+and state that evidence came through Grafana MCP.""",
     tools=tools,
     generate_content_config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=900),
 )

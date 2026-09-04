@@ -164,12 +164,66 @@ def calculate_what_if(production: Production, workers_added: int = 0, deadline_m
             "added_cost_usd": round(added_cost, 2), "deadline_result": "On time" if delay == 0 else f"{delay / 60:.1f}h late"}
 
 
+def calculate_recovery_option(production: Production, action: str) -> dict:
+    """Calculate an allowlisted action from the current schedule without mutating it."""
+    if action not in RECOVERY_SPECS:
+        raise ValueError("unsupported recovery action")
+    remaining = sum(production.scenes[s].remaining_frames for s in production.trailer.scene_ids)
+    raw_capacity = sum(worker.frames_per_hour for worker in production.workers.values() if worker.healthy)
+    if action == "add-workers":
+        raw_capacity += 220
+        efficiency = .92
+    elif action == "prioritize-scenes":
+        raw_capacity = sum(worker.frames_per_hour for worker in production.workers.values()) / 42 * 46
+        efficiency = .92
+    elif action == "restart-workers":
+        raw_capacity = sum(worker.frames_per_hour for worker in production.workers.values())
+        efficiency = .86
+    else:
+        remaining *= .82
+        efficiency = .82
+    throughput = max(.01, raw_capacity * efficiency)
+    hours_left = max((production.trailer.deadline - utcnow()).total_seconds() / 3600, 1 / 60)
+    completion_hours = remaining / throughput
+    delay_minutes = max(0.0, (completion_hours - hours_left) * 60)
+    spec = RECOVERY_SPECS[action]
+    return {"projected_throughput_fph": round(throughput, 1),
+            "projected_delay_minutes": round(delay_minutes, 1),
+            "deadline_result": "On time" if delay_minutes == 0 else f"{int(delay_minutes // 60)}h {int(delay_minutes % 60)}m late",
+            "estimated_added_cost_usd": spec["cost"]}
+
+
 class ProductionEngine:
     def __init__(self) -> None:
         self.lock = threading.RLock()
         self.production = create_project_nova()
         self.audit: list[dict] = []
         self.history: list[dict] = []
+        self._seed_history()
+
+    def _append_history(self) -> None:
+        p = self.production
+        impact = calculate_delivery_impact(p)
+        self.history.append({"timestamp": utcnow().isoformat(),
+                             "gpu_memory_utilization": round(max(w.gpu_memory_utilization for w in p.workers.values()), 1),
+                             "queue_depth": sum(s.remaining_frames for s in p.scenes.values()),
+                             "critical_queue_depth": impact["remaining_critical_frames"],
+                             "throughput_fph": impact["current_throughput_fph"]})
+        self.history[:] = self.history[-360:]
+
+    def _seed_history(self) -> None:
+        """Provide a believable local telemetry window before the first live tick."""
+        p = self.production
+        queue_now = sum(scene.remaining_frames for scene in p.scenes.values())
+        now = utcnow()
+        for index in range(72):
+            phase = index / 5
+            # Older points have a slightly deeper queue; every value is deterministic.
+            self.history.append({"timestamp": (now - timedelta(seconds=(71 - index) * 2)).isoformat(),
+                                 "gpu_memory_utilization": round(68 + math.sin(phase) * 5.8 + math.cos(phase / 2) * 1.7, 1),
+                                 "queue_depth": queue_now + (71 - index) * 11 + int(math.sin(phase) * 9),
+                                 "critical_queue_depth": max(0, sum(p.scenes[s].remaining_frames for s in p.trailer.scene_ids) + (71 - index) * 2),
+                                 "throughput_fph": round(840 + math.sin(phase) * 38, 1)})
 
     def record(self, event_type: str, **details) -> dict:
         event = {"id": str(uuid.uuid4()), "timestamp": utcnow().isoformat(), "event_type": event_type,
@@ -182,6 +236,7 @@ class ProductionEngine:
         with self.lock:
             self.production = create_project_nova()
             self.history.clear()
+            self._seed_history()
             self.record("simulation_reset", workflow_state="ON_TRACK")
 
     def inject_gpu_oom(self) -> None:
@@ -270,6 +325,11 @@ class ProductionEngine:
             if not p.running:
                 return
             p.tick_count += 1
+            for index, worker in enumerate(p.workers.values()):
+                if worker.healthy:
+                    phase = p.tick_count / 3 + index * .7
+                    worker.gpu_utilization = round(69 + math.sin(phase) * 12 + (index % 3) * 2, 1)
+                    worker.gpu_memory_utilization = round(67 + math.sin(phase / 1.7) * 7 + (index % 4), 1)
             if p.incident_active and p.workflow_state == "INVESTIGATING" and p.tick_count % 4 == 0:
                 p.workflow_state = "DECISION_REQUIRED"
                 scene_id = "SC-94" if p.incident_type == "corrupted_asset" else "SC-87"
@@ -300,13 +360,10 @@ class ProductionEngine:
             elif not p.incident_active:
                 for scene in p.scenes.values():
                     scene.completed_frames = min(scene.total_frames, scene.completed_frames + (2 if scene.trailer_critical else 1))
-            impact = calculate_delivery_impact(p)
-            self.history.append({"timestamp": utcnow().isoformat(),
-                                 "gpu_memory_utilization": round(max(w.gpu_memory_utilization for w in p.workers.values()), 1),
-                                 "queue_depth": sum(s.remaining_frames for s in p.scenes.values()),
-                                 "critical_queue_depth": impact["remaining_critical_frames"],
-                                 "throughput_fph": impact["current_throughput_fph"]})
-            self.history[:] = self.history[-360:]
+            elif p.incident_type == "gpu_oom":
+                # Failed retries add to the queue while Scene 87 remains blocked.
+                p.scenes["SC-87"].total_frames += 2
+            self._append_history()
 
     def status(self) -> dict:
         with self.lock:
