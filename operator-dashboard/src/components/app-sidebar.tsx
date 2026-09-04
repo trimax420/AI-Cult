@@ -23,26 +23,26 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 
-export type DashboardView = "overview" | "incidents"
+export type DashboardView = "overview" | "incidents" | "recovery" | "audit"
 
 type AppSidebarProps = {
   activeView?: DashboardView
   incidentCount?: number
-  onNavigate?: (view: DashboardView, sectionId?: string) => void
+  onNavigate?: (view: DashboardView) => void
 }
 
 const nav = [
   { label: "Overview", icon: CircleGaugeIcon, view: "overview" as const },
   { label: "Incidents", icon: ShieldAlertIcon, view: "incidents" as const },
-  { label: "Recovery", icon: WrenchIcon, view: "overview" as const, sectionId: "recovery" },
-  { label: "Audit", icon: ClipboardListIcon, view: "overview" as const, sectionId: "audit" },
+  { label: "Recovery", icon: WrenchIcon, view: "recovery" as const },
+  { label: "Audit", icon: ClipboardListIcon, view: "audit" as const },
 ]
 
 export function AppSidebar({ activeView = "overview", incidentCount = 0, onNavigate = () => undefined }: AppSidebarProps) {
   const { isMobile, setOpenMobile } = useSidebar()
 
-  function navigate(view: DashboardView, sectionId?: string) {
-    onNavigate(view, sectionId)
+  function navigate(view: DashboardView) {
+    onNavigate(view)
     if (isMobile) setOpenMobile(false)
   }
 
@@ -60,8 +60,8 @@ export function AppSidebar({ activeView = "overview", incidentCount = 0, onNavig
                 <SidebarMenuItem key={item.label}>
                   <SidebarMenuButton
                     tooltip={item.label}
-                    isActive={activeView === item.view && !item.sectionId}
-                    onClick={() => navigate(item.view, item.sectionId)}
+                    isActive={activeView === item.view}
+                    onClick={() => navigate(item.view)}
                   >
                     <item.icon />
                     <span>{item.label}</span>
