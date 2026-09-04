@@ -26,8 +26,11 @@ services:
       SIM_TICK_SECONDS: "2"
       PRODUCTION_ID: neon-horizon-trailer
       DELIVERY_DEADLINE_MINUTES: "360"
+      DATABASE_PATH: /data/ai-production.db
     ports:
       - "8080:8080"
+    volumes:
+      - simulator-data:/data
     depends_on:
       lgtm:
         condition: service_healthy
@@ -43,3 +46,4 @@ services:
 
 volumes:
   lgtm-data:
+  simulator-data:

@@ -85,7 +85,15 @@ The simulator exposes a first decision workflow:
 - `GET /telemetry-history` — recent GPU-memory and queue samples for operator charts.
 - `GET /recovery-plans` — ranked scenario-specific options with time, cost, and risk.
 - `POST /recovery-plans/{plan_id}/approve?approved_by=<name>` — approve and execute a plan.
-- `GET /audit-log` — immutable-in-process record of scenario and approval events.
+- `GET /audit-log` — durable SQLite record of scenario, alert, and approval events.
+- `POST /webhooks/grafana` — receive firing and resolved Grafana alerts.
+- `GET /incidents` — durable SQLite-backed incident history.
+
+Provision Grafana's webhook contact point and notification policy with:
+
+```powershell
+.\grafana\alerting\provision-webhook.ps1
+```
 
 Example:
 

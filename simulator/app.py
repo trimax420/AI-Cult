@@ -1,6 +1,8 @@
 import logging
+import json
 import os
 import random
+import sqlite3
 import threading
 import time
 import uuid
@@ -27,6 +29,7 @@ OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"
 PRODUCTION_ID = os.getenv("PRODUCTION_ID", "neon-horizon-trailer")
 TICK_SECONDS = float(os.getenv("SIM_TICK_SECONDS", "2"))
 DEADLINE_MINUTES = int(os.getenv("DELIVERY_DEADLINE_MINUTES", "360"))
+DATABASE_PATH = os.getenv("DATABASE_PATH", "/data/ai-production.db")
 
 resource = Resource.create(
     {
@@ -150,8 +153,7 @@ RECOVERY_LIBRARY = {
 
 state = RenderState()
 state_lock = threading.Lock()
-audit_lock = threading.Lock()
-audit_events = []
+database_lock = threading.Lock()
 history_lock = threading.Lock()
 telemetry_history = []
 deadline = datetime.now(timezone.utc) + timedelta(minutes=DEADLINE_MINUTES)
@@ -239,6 +241,52 @@ meter.create_observable_gauge("render.cost.estimated", callbacks=[observe_cost],
 meter.create_observable_gauge("render.condition", callbacks=[observe_condition], unit="1")
 
 
+def database_connection():
+    connection = sqlite3.connect(DATABASE_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def initialize_database() -> None:
+    os.makedirs(os.path.dirname(DATABASE_PATH) or ".", exist_ok=True)
+    with database_lock, database_connection() as connection:
+        connection.executescript("""
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                production_id TEXT NOT NULL,
+                details_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS incidents (
+                id TEXT PRIMARY KEY,
+                fingerprint TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL,
+                title TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                component TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                starts_at TEXT,
+                ends_at TEXT,
+                updated_at TEXT NOT NULL,
+                raw_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS recovery_executions (
+                id TEXT PRIMARY KEY,
+                incident_id TEXT NOT NULL,
+                plan_id TEXT NOT NULL,
+                plan_title TEXT NOT NULL,
+                status TEXT NOT NULL,
+                progress REAL NOT NULL,
+                approved_by TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (incident_id) REFERENCES incidents(id)
+            );
+        """)
+
+
 def record_audit(event_type: str, details: dict) -> dict:
     event = {
         "id": str(uuid.uuid4()),
@@ -247,9 +295,11 @@ def record_audit(event_type: str, details: dict) -> dict:
         "production_id": PRODUCTION_ID,
         **details,
     }
-    with audit_lock:
-        audit_events.append(event)
-        del audit_events[:-200]
+    with database_lock, database_connection() as connection:
+        connection.execute(
+            "INSERT INTO audit_events (id, timestamp, event_type, production_id, details_json) VALUES (?, ?, ?, ?, ?)",
+            (event["id"], event["timestamp"], event_type, PRODUCTION_ID, json.dumps(details)),
+        )
     return event
 
 
@@ -271,6 +321,57 @@ def plans_for_scenario(scenario: str) -> list[dict]:
         }
         for index, (plan_id, title, minutes, cost, risk) in enumerate(templates)
     ]
+
+
+def plans_for_component(component: str, scenario: str) -> list[dict]:
+    templates = RECOVERY_LIBRARY.get(component, RECOVERY_LIBRARY["pipeline"])
+    return [
+        {
+            "plan_id": plan_id,
+            "title": title,
+            "estimated_recovery_minutes": minutes,
+            "estimated_added_cost_usd": cost,
+            "risk": risk,
+            "recommended": index == 0,
+            "requires_approval": True,
+            "scenario": scenario,
+        }
+        for index, (plan_id, title, minutes, cost, risk) in enumerate(templates)
+    ]
+
+
+def sync_recovery_execution(scenario: str, progress: float) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    completed = None
+    with database_lock, database_connection() as connection:
+        active = connection.execute(
+            "SELECT id, incident_id, plan_id FROM recovery_executions WHERE status = 'executing' ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+        if not active:
+            return
+        if scenario == "recovered" or progress >= 100:
+            connection.execute(
+                "UPDATE recovery_executions SET status='completed', progress=100, completed_at=?, updated_at=? WHERE id=?",
+                (now, now, active["id"]),
+            )
+            resolution = connection.execute(
+                "UPDATE incidents SET status='resolved', ends_at=?, updated_at=? WHERE id=? AND status='firing'",
+                (now, now, active["incident_id"]),
+            )
+            completed = dict(active)
+            completed["incident_resolved"] = resolution.rowcount > 0
+        else:
+            connection.execute(
+                "UPDATE recovery_executions SET progress=?, updated_at=? WHERE id=?",
+                (round(progress, 1), now, active["id"]),
+            )
+    if completed:
+        record_audit("incident_auto_resolved" if completed["incident_resolved"] else "recovery_execution_completed", {
+            "incident_id": completed["incident_id"],
+            "execution_id": completed["id"],
+            "plan_id": completed["plan_id"],
+            "scenario": "recovered",
+        })
 
 
 def apply_scenario_tick() -> None:
@@ -403,6 +504,8 @@ def simulation_loop() -> None:
             with tracer.start_as_current_span("render_scene"):
                 apply_scenario_tick()
                 with state_lock:
+                    recovery_scenario = state.scenario
+                    recovery_progress = state.recovery_progress
                     point = {
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "gpu_memory_utilization": round(state.gpu_memory_utilization, 2),
@@ -411,6 +514,7 @@ def simulation_loop() -> None:
                 with history_lock:
                     telemetry_history.append(point)
                     del telemetry_history[:-360]
+                sync_recovery_execution(recovery_scenario, recovery_progress)
             with tracer.start_as_current_span("update_delivery_forecast"):
                 time.sleep(0.01)
         time.sleep(TICK_SECONDS)
@@ -422,6 +526,7 @@ FastAPIInstrumentor.instrument_app(app, tracer_provider=trace_provider)
 
 @app.on_event("startup")
 def start_simulator() -> None:
+    initialize_database()
     threading.Thread(target=simulation_loop, daemon=True, name="render-simulation").start()
     logger.info("Render simulator started", extra={"production.id": PRODUCTION_ID})
     record_audit("simulator_started", {"scenario": state.scenario})
@@ -525,9 +630,157 @@ def approve_recovery_plan(plan_id: str, approved_by: str = "operator"):
 @app.get("/audit-log")
 def get_audit_log(limit: int = 50):
     safe_limit = max(1, min(limit, 200))
-    with audit_lock:
-        events = list(reversed(audit_events[-safe_limit:]))
+    with database_lock, database_connection() as connection:
+        rows = connection.execute(
+            "SELECT * FROM audit_events ORDER BY timestamp DESC LIMIT ?", (safe_limit,)
+        ).fetchall()
+    events = [{
+        "id": row["id"], "timestamp": row["timestamp"],
+        "event_type": row["event_type"], "production_id": row["production_id"],
+        **json.loads(row["details_json"]),
+    } for row in rows]
     return {"production_id": PRODUCTION_ID, "events": events}
+
+
+@app.post("/webhooks/grafana")
+def receive_grafana_webhook(payload: dict):
+    received_at = datetime.now(timezone.utc).isoformat()
+    processed = []
+    for alert in payload.get("alerts", []):
+        labels = alert.get("labels", {})
+        annotations = alert.get("annotations", {})
+        status = alert.get("status", payload.get("status", "firing"))
+        fingerprint = alert.get("fingerprint") or "|".join(
+            f"{key}={value}" for key, value in sorted(labels.items())
+        )
+        title = labels.get("alertname", payload.get("title", "Grafana alert"))
+        severity = labels.get("severity", "warning")
+        component = labels.get("component", "unknown")
+        summary = annotations.get("summary", annotations.get("description", title))
+        incident_id = str(uuid.uuid4())
+        ends_at = alert.get("endsAt") if status == "resolved" else None
+        with database_lock, database_connection() as connection:
+            existing = connection.execute(
+                "SELECT id FROM incidents WHERE fingerprint = ?", (fingerprint,)
+            ).fetchone()
+            if existing:
+                incident_id = existing["id"]
+                connection.execute("""
+                    UPDATE incidents SET status=?, title=?, severity=?, component=?, summary=?,
+                    ends_at=?, updated_at=?, raw_json=? WHERE fingerprint=?
+                """, (status, title, severity, component, summary, ends_at, received_at,
+                      json.dumps(alert), fingerprint))
+            else:
+                connection.execute("""
+                    INSERT INTO incidents (id, fingerprint, status, title, severity, component,
+                    summary, starts_at, ends_at, updated_at, raw_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (incident_id, fingerprint, status, title, severity, component, summary,
+                      alert.get("startsAt"), ends_at, received_at, json.dumps(alert)))
+        with state_lock:
+            current_scenario = state.scenario
+        record_audit("grafana_alert_received", {
+            "incident_id": incident_id, "status": status, "scenario": current_scenario,
+            "severity": severity, "component": component, "alertname": title,
+        })
+        processed.append({"incident_id": incident_id, "status": status, "title": title})
+    return {"accepted": len(processed), "incidents": processed}
+
+
+@app.get("/incidents")
+def get_incidents(limit: int = 50):
+    safe_limit = max(1, min(limit, 200))
+    with database_lock, database_connection() as connection:
+        rows = connection.execute(
+            "SELECT id, fingerprint, status, title, severity, component, summary, starts_at, ends_at, updated_at FROM incidents ORDER BY updated_at DESC LIMIT ?",
+            (safe_limit,),
+        ).fetchall()
+    return {"production_id": PRODUCTION_ID, "incidents": [dict(row) for row in rows]}
+
+
+@app.get("/incidents/{incident_id}/recovery-plans")
+def get_incident_recovery_plans(incident_id: str):
+    with database_lock, database_connection() as connection:
+        incident = connection.execute(
+            "SELECT id, status, component, title FROM incidents WHERE id = ?", (incident_id,)
+        ).fetchone()
+    if not incident:
+        raise HTTPException(status_code=404, detail="incident not found")
+    plans = plans_for_component(incident["component"], f"incident:{incident_id}")
+    return {
+        "production_id": PRODUCTION_ID,
+        "incident_id": incident_id,
+        "incident_status": incident["status"],
+        "can_execute": incident["status"] == "firing",
+        "plans": plans,
+    }
+
+
+@app.post("/incidents/{incident_id}/recovery-plans/{plan_id}/approve")
+def approve_incident_recovery_plan(incident_id: str, plan_id: str, approved_by: str = "operator"):
+    with database_lock, database_connection() as connection:
+        incident = connection.execute(
+            "SELECT id, status, component, title FROM incidents WHERE id = ?", (incident_id,)
+        ).fetchone()
+        active = connection.execute(
+            "SELECT id FROM recovery_executions WHERE status = 'executing' LIMIT 1"
+        ).fetchone()
+    if not incident:
+        raise HTTPException(status_code=404, detail="incident not found")
+    if incident["status"] != "firing":
+        raise HTTPException(status_code=409, detail="only firing incidents can start recovery")
+    if active:
+        raise HTTPException(status_code=409, detail="another recovery execution is already running")
+    plans = plans_for_component(incident["component"], f"incident:{incident_id}")
+    plan = next((candidate for candidate in plans if candidate["plan_id"] == plan_id), None)
+    if not plan:
+        raise HTTPException(status_code=404, detail="recovery plan not found for this incident")
+
+    with state_lock:
+        previous = state.scenario
+        state.scenario = "recovering"
+        state.recovery_progress = 0
+        state.added_cost_usd += plan["estimated_added_cost_usd"]
+        if plan["estimated_added_cost_usd"] > 0:
+            cost_counter.add(plan["estimated_added_cost_usd"], {
+                "production.id": PRODUCTION_ID,
+                "plan": plan_id,
+            })
+
+    execution_id = str(uuid.uuid4())
+    started_at = datetime.now(timezone.utc).isoformat()
+    with database_lock, database_connection() as connection:
+        connection.execute("""
+            INSERT INTO recovery_executions
+            (id, incident_id, plan_id, plan_title, status, progress, approved_by, started_at, completed_at, updated_at)
+            VALUES (?, ?, ?, ?, 'executing', 0, ?, ?, NULL, ?)
+        """, (execution_id, incident_id, plan_id, plan["title"], approved_by, started_at, started_at))
+
+    event = record_audit("incident_recovery_approved", {
+        "incident_id": incident_id,
+        "approved_by": approved_by,
+        "scenario": previous,
+        "plan_id": plan_id,
+        "execution_id": execution_id,
+        "estimated_recovery_minutes": plan["estimated_recovery_minutes"],
+        "estimated_added_cost_usd": plan["estimated_added_cost_usd"],
+    })
+    return {"status": "executing", "execution_id": execution_id, "plan": plan, "audit_event_id": event["id"]}
+
+
+@app.get("/recovery-executions")
+def get_recovery_executions(incident_id: str | None = None, limit: int = 50):
+    safe_limit = max(1, min(limit, 200))
+    query = "SELECT * FROM recovery_executions"
+    parameters = []
+    if incident_id:
+        query += " WHERE incident_id = ?"
+        parameters.append(incident_id)
+    query += " ORDER BY started_at DESC LIMIT ?"
+    parameters.append(safe_limit)
+    with database_lock, database_connection() as connection:
+        rows = connection.execute(query, parameters).fetchall()
+    return {"production_id": PRODUCTION_ID, "executions": [dict(row) for row in rows]}
 
 
 @app.post("/scenario/{scenario}")
