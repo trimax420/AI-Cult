@@ -1,13 +1,14 @@
 import json
 import logging
 import os
+import re
 import threading
 import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
@@ -221,6 +222,38 @@ def investigation():
         {"id": "traces", "label": "Inspect correlated render trace", "status": "complete" if decided else "idle"},
         {"id": "impact", "label": "Calculate deterministic delivery impact", "status": "complete" if decided else "idle"},
     ], "evidence": evidence if active else {}}
+
+
+def sse_message(text: str) -> StreamingResponse:
+    event = json.dumps({"content": {"parts": [{"text": text}]}})
+    return StreamingResponse(iter([f"data: {event}\n\n"]), media_type="text/event-stream")
+
+
+@app.post("/agent-fallback/apps/{app_name}/users/{user_id}/sessions/{session_id}")
+def mock_agent_session(app_name: str, user_id: str, session_id: str):
+    """Compatibility session for a dashboard tab opened before the optional ADK service."""
+    return {"id": session_id, "app_name": app_name, "user_id": user_id, "mode": "mock-fallback"}
+
+
+@app.post("/agent-fallback/run_sse")
+def mock_agent_run(payload: dict):
+    """Keep the local demo operable when ADK is intentionally not running.
+
+    This endpoint accepts only the legacy, already-approved recovery prompt. It
+    never permits a model-created action or bypasses the existing approval ID.
+    """
+    parts = payload.get("newMessage", {}).get("parts", [])
+    prompt = " ".join(str(part.get("text", "")) for part in parts if isinstance(part, dict))
+    match = re.search(r"human operator approves\s+(add-workers|prioritize-scenes|restart-workers|reduce-preview-quality)", prompt, re.I)
+    approval_match = re.search(r"approval ID\s+([a-f0-9-]{36})", prompt, re.I)
+    if match and approval_match:
+        action = match.group(1).lower()
+        try:
+            outcome = engine.execute(action, approval_match.group(1), "operator-dashboard")
+            return sse_message(f"mock-fallback executed approved {outcome['action']}; Grafana verification is in progress.")
+        except ValueError as error:
+            return sse_message(f"mock-fallback could not execute recovery: {error}")
+    return sse_message("mock-fallback investigation complete. Use deterministic recovery options and human approval.")
 
 
 def recovery_options() -> list[dict]:
