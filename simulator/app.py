@@ -21,7 +21,7 @@ from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from domain import ProductionEngine, RECOVERY_SPECS, calculate_delivery_impact, calculate_recovery_option, calculate_what_if
 
@@ -98,9 +98,9 @@ class RecoveryRequest(BaseModel):
 
 
 class WhatIfRequest(BaseModel):
-    workers_added: int = 0
-    deadline_minutes: int | None = None
-    quality_percent: int = 100
+    workers_added: int = Field(default=0, ge=0, le=10)
+    deadline_minutes: int | None = Field(default=None, ge=15)
+    quality_percent: int = Field(default=100, ge=50, le=100)
     prioritize_critical: bool = False
 
 
@@ -147,14 +147,23 @@ def reset():
     return engine.status()
 
 
+def flush_incident_evidence():
+    """Export the new incident before the agent begins its investigation."""
+    trace_provider.force_flush(timeout_millis=3000)
+    logger_provider.force_flush(timeout_millis=3000)
+    reader.collect()
+
+
 @app.post("/simulation/incidents/gpu-oom")
 def gpu_oom():
     with tracer.start_as_current_span("incident.gpu_oom") as span:
         span.set_attribute("scene.id", "SC-87")
         span.set_attribute("error.type", "cuda_oom")
         engine.inject_gpu_oom()
+        engine.production.incident_trace_id = format(span.get_span_context().trace_id, "032x")
         logger.error(json.dumps({"message": "CUDA out of memory", "scene_id": "SC-87", "worker_pool": "gpu-b",
                                  "error_type": "cuda_oom", "production_id": "project-nova"}))
+    flush_incident_evidence()
     return engine.status()
 
 
@@ -164,9 +173,11 @@ def corrupted_asset():
         span.set_attribute("scene.id", "SC-94")
         span.set_attribute("asset.name", "nova_city.exr")
         engine.inject_corrupted_asset()
+        engine.production.incident_trace_id = format(span.get_span_context().trace_id, "032x")
         logger.error(json.dumps({"message": "Corrupted EXR asset checksum mismatch", "scene_id": "SC-94",
                                  "asset": "nova_city.exr", "error_type": "asset_corruption",
                                  "production_id": "project-nova"}))
+    flush_incident_evidence()
     return engine.status()
 
 
@@ -224,6 +235,7 @@ def verification_comparison():
     if not before:
         return {"available": False}
     return {"available": True, "passed": engine.production.verification_complete,
+            "status": "passed" if engine.production.verification_complete else "failed" if engine.production.recovery_failed else "pending",
             "before": {"throughput_fph": before["impact"]["current_throughput_fph"],
                        "healthy_workers": before["gpu_workers_active"], "critical_queue": before["critical_queue_depth"],
                        "delay_minutes": before["impact"]["projected_delay_minutes"]},

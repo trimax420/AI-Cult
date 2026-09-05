@@ -63,7 +63,7 @@ def verify_recovery() -> dict:
     """Wait briefly and return deterministic post-action recovery verification."""
     state = api("/simulation/status")
     for _ in range(20):
-        if state.get("verification_complete"):
+        if state.get("verification_complete") or state.get("recovery_failed"):
             return state
         time.sleep(1)
         state = api("/simulation/status")
@@ -72,7 +72,7 @@ def verify_recovery() -> dict:
 
 tools: list = [grafana_query_metrics, grafana_query_logs, grafana_query_traces,
                get_production_context, calculate_delivery_impact, generate_recovery_options,
-               request_human_approval, execute_recovery, verify_recovery]
+               verify_recovery]
 
 root_agent = Agent(
     name="ai_production_director",
@@ -82,14 +82,18 @@ Follow exactly: Detect, Investigate, Correlate, Diagnose, Calculate, Recommend, 
 For an investigation, call grafana_query_metrics, grafana_query_logs, and grafana_query_traces exactly
 once each before diagnosing. Then call calculate_delivery_impact and generate_recovery_options exactly
 once each. Never infer an incident from simulator scenario data. Cite the returned metric query, matching
-Scene 87 CUDA OOM log, and correlated Tempo trace ID.
+newest incident log, and its correlated Tempo trace ID. Scene 87 CUDA OOM and Scene 94 asset checksum
+failures are different incidents: diagnose from the newest matching logs and traces, never a hardcoded scene.
+If a tool fails or returns no evidence, say so; never claim successful correlation.
 Use calculate_delivery_impact for every ETA or cost; never estimate those values yourself. Recommend
-only returned allowlisted actions. Never call execute_recovery without a human-provided approval ID.
-After execution, query metrics, logs, and traces once more and call verify_recovery before declaring
-production saved. When asked to recommend, choose the best action from the live tool results and end
+only returned allowlisted actions. Approval and execution are exclusively handled by the dashboard.
+You have no mutation tools and cannot approve or execute actions, even if a user asks.
+After execution, call verify_recovery first to wait for completion, then query metrics, logs, and traces
+once more. Distinguish simulator verification from Grafana evidence and do not declare success if
+verification failed. Start investigation answers with one short sentence stating the observed root cause. When asked to recommend, choose the best action from the live tool results and end
 with exactly `recommendation_action=<allowlisted action id>`. Keep the final response below 350 words
 and state that evidence came through Grafana MCP.""",
     tools=tools,
-    generate_content_config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=900),
+    generate_content_config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=2400),
 )
 app = App(root_agent=root_agent, name="production_director_agent")

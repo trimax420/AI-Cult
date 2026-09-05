@@ -5,6 +5,45 @@ from domain import ProductionEngine, calculate_delivery_impact, calculate_recove
 
 
 class ProjectNovaTests(unittest.TestCase):
+    def test_second_execution_is_rejected_without_consuming_approval(self):
+        engine = ProductionEngine()
+        engine.inject_gpu_oom()
+        first = engine.request_approval("prioritize-scenes")
+        second = engine.request_approval("add-workers")
+        engine.execute("prioritize-scenes", first.id, "director")
+        with self.assertRaisesRegex(ValueError, "already executing"):
+            engine.execute("add-workers", second.id, "director")
+        self.assertFalse(second.used)
+        self.assertEqual(engine.production.added_cost_usd, 17)
+
+    def test_recovery_requires_an_active_incident(self):
+        engine = ProductionEngine()
+        approval = engine.request_approval("restart-workers")
+        with self.assertRaisesRegex(ValueError, "no active incident"):
+            engine.execute("restart-workers", approval.id, "director")
+        self.assertFalse(approval.used)
+
+    def test_retry_clears_old_verification_and_new_incident_clears_recovery(self):
+        engine = ProductionEngine()
+        engine.inject_gpu_oom()
+        engine.production.fail_next_recovery = True
+        approval = engine.request_approval("prioritize-scenes")
+        engine.execute("prioritize-scenes", approval.id, "director")
+        for _ in range(10):
+            engine.tick()
+        self.assertIsNotNone(engine.production.verification_snapshot)
+        retry = engine.request_approval("restart-workers")
+        engine.execute("restart-workers", retry.id, "director")
+        self.assertIsNone(engine.production.verification_snapshot)
+        self.assertFalse(engine.production.recovery_failed)
+        for _ in range(10):
+            engine.tick()
+        engine.inject_corrupted_asset()
+        self.assertIsNone(engine.production.recovery_baseline)
+        self.assertIsNone(engine.production.verification_snapshot)
+        self.assertEqual(engine.production.recovery_progress, 0)
+        self.assertFalse(engine.production.verification_complete)
+
     def test_project_has_twenty_workers_and_scene_87_is_critical(self):
         engine = ProductionEngine()
         self.assertEqual(len(engine.production.workers), 20)

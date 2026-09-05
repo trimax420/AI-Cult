@@ -80,6 +80,7 @@ class Production:
     tick_count: int = 0
     recovery_baseline: dict | None = None
     verification_snapshot: dict | None = None
+    incident_trace_id: str | None = None
 
 
 RECOVERY_SPECS = {
@@ -255,6 +256,10 @@ class ProductionEngine:
             self.production.incident_started_at = utcnow()
             self.production.workflow_state = "INVESTIGATING"
             self.production.verification_complete = False
+            self.production.recovery_failed = False
+            self.production.recovery_progress = 0
+            self.production.recovery_baseline = None
+            self.production.verification_snapshot = None
             self.record("gpu_oom_injected", scene_id="SC-87", failed_workers=8, workflow_state="INVESTIGATING")
 
     def inject_corrupted_asset(self) -> None:
@@ -267,6 +272,10 @@ class ProductionEngine:
             self.production.incident_started_at = utcnow()
             self.production.workflow_state = "INVESTIGATING"
             self.production.verification_complete = False
+            self.production.recovery_failed = False
+            self.production.recovery_progress = 0
+            self.production.recovery_baseline = None
+            self.production.verification_snapshot = None
             self.record("corrupted_asset_injected", scene_id="SC-94", asset="nova_city.exr",
                         workflow_state="INVESTIGATING")
 
@@ -288,16 +297,23 @@ class ProductionEngine:
                 raise ValueError("approval ID has already been used")
             if utcnow() >= approval.expires_at:
                 raise ValueError("approval ID has expired")
+            if self.production.recovery_action:
+                raise ValueError("a recovery is already executing")
+            if not self.production.incident_active:
+                raise ValueError("no active incident to recover")
             approval.used = True
             approval.approved_by = approved_by
             spec = RECOVERY_SPECS[action]
+            self.production.verification_snapshot = None
+            self.production.verification_complete = False
             self.production.recovery_baseline = self.status()
             self.production.recovery_action = action
             self.production.recovery_progress = 1
             self.production.recovery_failed = False
             self.production.added_cost_usd += spec["cost"]
             if action == "add-workers":
-                for n in range(21, 23):
+                first_id = len(self.production.workers) + 1
+                for n in range(first_id, first_id + 2):
                     self.production.workers[f"GPU-{n:02d}"] = Worker(f"GPU-{n:02d}", frames_per_hour=110)
             elif action == "prioritize-scenes":
                 for scene in self.production.scenes.values():
@@ -374,6 +390,8 @@ class ProductionEngine:
             return {"production_id": p.id, "production_title": p.title, "workflow_state": p.workflow_state,
                     "scenario": p.incident_type if p.incident_active else ("recovered" if p.verification_complete else "healthy"),
                     "running": p.running, "incident_active": p.incident_active,
+                    "incident_started_at": p.incident_started_at.isoformat() if p.incident_started_at else None,
+                    "incident_trace_id": p.incident_trace_id,
                     "recovery_progress": round(p.recovery_progress, 1), "verification_complete": p.verification_complete,
                     "recovery_failed": p.recovery_failed,
                     "trailer": {**asdict(p.trailer), "deadline": p.trailer.deadline.isoformat(),

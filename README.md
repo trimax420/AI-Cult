@@ -4,7 +4,7 @@ AI Production Director is a hackathon demo for operating a simulated film render
 
 > Scene 87 is failing with GPU memory exhaustion. The trailer will miss delivery unless an operator approves recovery.
 
-The app monitors a local render-farm simulator, investigates metrics, logs, and traces in Grafana, calculates deadline and cost impact with deterministic Python code, requires human approval for recovery, and verifies the outcome.
+The app monitors a local render-farm simulator, investigates metrics, logs, and traces in Grafana, calculates deadline and cost impact with deterministic Python code, requires human approval for recovery, and verifies the outcome in the simulator. The optional agent separately checks fresh Grafana evidence.
 
 ## What is included
 
@@ -120,13 +120,13 @@ Additional local endpoints:
 | ADK playground | http://localhost:8090 |
 | Grafana MCP | http://localhost:8000/mcp |
 
-When you inject **GPU OOM** in the product dashboard, the dashboard starts the ADK agent. The agent must query Grafana MCP for:
+When you inject **GPU OOM** in the product dashboard, the dashboard starts the ADK agent. The agent queries Grafana MCP for:
 
 1. Prometheus throughput, queue, and GPU-memory evidence.
-2. The matching Scene 87 CUDA OOM log from Loki.
-3. The `incident.gpu_oom` trace from Tempo.
+2. The matching Scene 87 CUDA OOM or Scene 94 checksum-failure log from Loki.
+3. The matching `incident.gpu_oom` or `incident.corrupted_asset` trace from Tempo.
 
-It then ranks the live, deterministic recovery projections and returns one allowlisted recommendation to the dashboard. The agent cannot invent costs or ETAs, execute a non-allowlisted action, or execute without the approval ID supplied by the operator. The dashboard always executes an approved action through the recovery API first, so an unavailable agent cannot block the human-approved recovery; ADK then performs post-recovery verification when available.
+It then ranks the live, deterministic recovery projections and returns one allowlisted recommendation to the dashboard. The agent gets costs and ETAs from deterministic tools. Its registered tools are read-only: only the dashboard can create and consume an operator approval through the recovery API. The dashboard always executes an approved action through the recovery API first, so an unavailable agent cannot block the human-approved recovery; ADK then performs post-recovery verification when available.
 
 To control Gemini spend, one normal demo uses two focused agent runs: investigation and post-recovery verification. There is no background LLM polling.
 
@@ -216,3 +216,28 @@ The Python tests cover Project Nova scheduling, deterministic impact calculation
 - Google Cloud is used only for Gemini/Vertex AI in the optional agent mode.
 - This is a hackathon simulator: no real compute workers, tenant isolation, user authentication, or production infrastructure mutations are performed.
 - Do not commit `.env`, API keys, or Google credentials.
+
+## Submission readiness — checked September 5, 2026
+
+Intended track: **Grafana Labs**. The runtime uses Google ADK + Gemini on Vertex AI and the official `grafana/mcp-grafana` server. The simulator generates synthetic film-production telemetry; it does not operate a real render farm. Simulator verification and Grafana observations are separate evidence sources.
+
+For judging, run the **agent profile with Vertex AI enabled**. The account-free `mock-fallback` mode is a development convenience and does not demonstrate Gemini/Google Cloud runtime use. Google AI Studio alone does not establish the required Google Cloud use.
+
+Before submission:
+
+- Publish a judge-accessible project URL, with working backend, Vertex AI, and MCP connectivity.
+- Make the repository public and push the root MIT `LICENSE` with all source and setup instructions. Confirm GitHub detects it.
+- Record the functioning app in English (or with English subtitles), at most three minutes, and publish on YouTube or Vimeo.
+- Select Grafana Labs and complete Devpost, including features, technologies, data sources, and learnings.
+- Confirm eligibility, team membership (maximum four), original work during the contest, and rights to included assets.
+- Ask the organizers whether their AI-tooling restriction includes development-time coding assistants. Do not assume runtime-only scope.
+
+The hosted URL, video, and Devpost form are not yet prepared. The configured GitHub URL returned 404 to an unauthenticated check; public visibility still needs verification. Local commit history begins August 26, 2026, which is within the contest period but does not independently prove originality.
+
+Deadline: September 9, 2026, 2:00 PM PDT (September 10, 2:30 AM IST).
+
+Sources: [Official rules](https://agentic-cinema.devpost.com/rules), [Grafana track requirements](https://agentic-cinema.devpost.com/details/grafana-resources).
+
+## License
+
+MIT; see [LICENSE](LICENSE). Third-party dependencies retain their respective licenses.

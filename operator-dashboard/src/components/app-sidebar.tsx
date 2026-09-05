@@ -1,10 +1,8 @@
 import {
-  ActivityIcon,
   BellIcon,
   CircleGaugeIcon,
   ClipboardListIcon,
   FilmIcon,
-  SettingsIcon,
   ShieldAlertIcon,
   WrenchIcon,
 } from "lucide-react"
@@ -77,9 +75,8 @@ export function AppSidebar({ activeView = "overview", incidentCount = 0, onNavig
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
-          <SidebarMenuItem><SidebarMenuButton tooltip="Notifications"><BellIcon /><span>Notifications</span></SidebarMenuButton></SidebarMenuItem>
-          <SidebarMenuItem><SidebarMenuButton tooltip="Settings"><SettingsIcon /><span>Settings</span></SidebarMenuButton></SidebarMenuItem>
-          <SidebarMenuItem><SidebarMenuButton tooltip="Operator profile"><ActivityIcon /><span>Ops Operator</span></SidebarMenuButton></SidebarMenuItem>
+          <SidebarMenuItem><SidebarMenuButton tooltip="Notifications" onClick={() => navigate("audit")}><BellIcon /><span>Notifications</span></SidebarMenuButton></SidebarMenuItem>
+          <li className="px-2 py-2 text-xs text-muted-foreground">Demo operator</li>
         </SidebarMenu>
       </SidebarFooter>
     </Sidebar>
