@@ -1,10 +1,41 @@
 import unittest
 from datetime import timedelta
 
-from domain import ProductionEngine, calculate_delivery_impact, calculate_recovery_option, calculate_what_if, utcnow
+from domain import (INCIDENT_SCENARIOS, ProductionEngine, calculate_delivery_impact,
+                    calculate_recovery_option, calculate_what_if, utcnow)
 
 
 class ProjectNovaTests(unittest.TestCase):
+    def test_every_telemetry_scenario_creates_risk_and_can_be_recovered(self):
+        for scenario_id, scenario in INCIDENT_SCENARIOS.items():
+            with self.subTest(scenario=scenario_id):
+                engine = ProductionEngine()
+                engine.inject_incident(scenario_id)
+                state = engine.status()
+                self.assertEqual(state["scenario"], scenario["issue_type"])
+                self.assertTrue(state["incident_active"])
+                self.assertGreater(state["impact"]["projected_delay_minutes"], 0)
+                approval = engine.request_approval("prioritize-scenes")
+                engine.execute("prioritize-scenes", approval.id, "director")
+                for _ in range(10):
+                    engine.tick()
+                self.assertTrue(engine.production.verification_complete)
+
+    def test_threshold_scenarios_change_the_matching_telemetry(self):
+        checks = {
+            "gpu-oom": lambda state: state["gpu_memory_utilization"] > 95,
+            "worker-loss": lambda state: state["gpu_workers_active"] / state["gpu_workers_total"] < .75,
+            "queue-surge": lambda state: state["impact"]["required_throughput_fph"] > state["impact"]["current_throughput_fph"],
+            "storage-pressure": lambda state: state["storage_utilization"] > 90,
+            "network-latency": lambda state: state["network_latency_ms"] > 150,
+            "corrupted-asset": lambda state: state["asset_error_rate"] > 10,
+        }
+        for scenario_id, check in checks.items():
+            with self.subTest(scenario=scenario_id):
+                engine = ProductionEngine()
+                engine.inject_incident(scenario_id)
+                self.assertTrue(check(engine.status()))
+
     def test_second_execution_is_rejected_without_consuming_approval(self):
         engine = ProductionEngine()
         engine.inject_gpu_oom()
@@ -137,6 +168,8 @@ class ProjectNovaTests(unittest.TestCase):
         self.assertTrue(engine.production.recovery_failed)
         self.assertFalse(engine.production.verification_complete)
         self.assertTrue(any(event["event_type"] == "recovery_verification_failed" for event in engine.audit))
+        with self.assertRaisesRegex(ValueError, "choose a revised action"):
+            engine.request_approval("prioritize-scenes")
 
 
 if __name__ == "__main__":

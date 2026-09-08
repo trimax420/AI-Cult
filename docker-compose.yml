@@ -25,8 +25,12 @@ services:
       OTEL_SERVICE_NAME: render-farm-simulator
       SIM_TICK_SECONDS: "2"
       PRODUCTION_ID: project-nova
+      INCIDENT_DB_PATH: /data/production-director.db
+      PRODUCTION_AGENT_URL: http://production-director-agent:8090
     ports:
       - "127.0.0.1:${SIMULATOR_PORT:-8080}:8080"
+    volumes:
+      - production-director-data:/data
     depends_on:
       lgtm:
         condition: service_healthy
@@ -100,11 +104,18 @@ services:
       OTEL_SERVICE_NAME: production-director-agent
     ports:
       - "127.0.0.1:8090:8090"
+    # Google Cloud CLI stores Application Default Credentials under %APPDATA%
+    # on Windows. Long-form syntax avoids interpreting the drive-letter colon as
+    # a volume separator, and does not depend on a specific Windows user name.
     volumes:
-      - ${HOME}/.config/gcloud/application_default_credentials.json:/var/secrets/google/application_default_credentials.json:ro
+      - type: bind
+        source: ${APPDATA}/gcloud/application_default_credentials.json
+        target: /var/secrets/google/application_default_credentials.json
+        read_only: true
     depends_on:
       - render-simulator
       - grafana-mcp
 
 volumes:
   lgtm-data:
+  production-director-data:

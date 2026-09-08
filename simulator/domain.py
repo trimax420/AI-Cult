@@ -75,6 +75,10 @@ class Production:
     full_film: Deliverable
     scenes: dict[str, Scene]
     workers: dict[str, Worker]
+    storage_utilization: float = 61.0
+    network_latency_ms: float = 12.0
+    asset_error_rate: float = 0.0
+    last_failed_action: str | None = None
     approvals: dict[str, Approval] = field(default_factory=dict)
     added_cost_usd: float = 0.0
     tick_count: int = 0
@@ -84,10 +88,54 @@ class Production:
 
 
 RECOVERY_SPECS = {
-    "add-workers": {"title": "Add two GPU workers", "cost": 84.0, "risk": "low"},
-    "prioritize-scenes": {"title": "Prioritize trailer scenes", "cost": 17.0, "risk": "medium"},
-    "restart-workers": {"title": "Restart affected workers", "cost": 12.0, "risk": "low"},
-    "reduce-preview-quality": {"title": "Reduce preview quality", "cost": 4.0, "risk": "medium"},
+    "add-workers": {"title": "Add two GPU workers", "cost": 84.0, "risk": "low",
+                    "incident_types": {"gpu_oom", "worker_loss", "queue_surge"}},
+    "prioritize-scenes": {"title": "Prioritize trailer scenes", "cost": 17.0, "risk": "medium",
+                          "incident_types": {"gpu_oom", "worker_loss", "queue_surge", "storage_pressure", "network_latency"}},
+    "restart-workers": {"title": "Restart affected workers", "cost": 12.0, "risk": "low",
+                        "incident_types": {"gpu_oom", "worker_loss"}},
+    "reduce-preview-quality": {"title": "Reduce preview quality", "cost": 4.0, "risk": "medium",
+                               "incident_types": {"gpu_oom", "queue_surge"}},
+    "rebalance-queue": {"title": "Rebalance the trailer render queue", "cost": 10.0, "risk": "low",
+                        "incident_types": {"queue_surge"}},
+    "release-storage": {"title": "Release temporary render storage", "cost": 9.0, "risk": "low",
+                        "incident_types": {"storage_pressure"}},
+    "reroute-transfers": {"title": "Reroute scene transfers", "cost": 18.0, "risk": "low",
+                          "incident_types": {"network_latency"}},
+    "restore-asset": {"title": "Restore the verified artwork", "cost": 6.0, "risk": "low",
+                      "incident_types": {"corrupted_asset"}},
+}
+
+INCIDENT_SCENARIOS = {
+    "gpu-oom": {"issue_type": "gpu_oom", "label": "Render memory pressure", "scene_id": "SC-87",
+                "affected_area": "render capacity", "threshold": "Render memory above 95%",
+                "condition": "Scene 87 has stalled because part of the render capacity is unavailable.",
+                "impact": "The trailer will miss its delivery window unless capacity is restored or trailer work is prioritised."},
+    "worker-loss": {"issue_type": "worker_loss", "label": "Render worker loss", "scene_id": "SC-91",
+                    "affected_area": "render capacity", "threshold": "Healthy workers below 75%",
+                    "condition": "Scene 91 has slowed because six render workers stopped responding.",
+                    "impact": "The reduced capacity puts the remaining trailer scenes behind schedule."},
+    "queue-surge": {"issue_type": "queue_surge", "label": "Trailer queue surge", "scene_id": "SC-82",
+                   "affected_area": "render queue", "threshold": "Required pace exceeds available throughput",
+                   "condition": "A late group of trailer frames has pushed the critical queue beyond the available pace.",
+                   "impact": "The trailer delivery is at risk unless critical scenes move ahead of full-film work."},
+    "storage-pressure": {"issue_type": "storage_pressure", "label": "Production storage pressure", "scene_id": "SC-97",
+                        "affected_area": "production storage", "threshold": "Storage use above 90%",
+                        "condition": "Scene 97 is waiting because production storage has reached its safe working limit.",
+                        "impact": "New trailer frames cannot move through the pipeline at the required pace."},
+    "network-latency": {"issue_type": "network_latency", "label": "Render transfer slowdown", "scene_id": "SC-84",
+                       "affected_area": "media transfer", "threshold": "Transfer latency above 150 ms",
+                       "condition": "Scene 84 transfers are taking too long to reach the render workers.",
+                       "impact": "Trailer frames are arriving late to the queue and could delay final delivery."},
+    "corrupted-asset": {"issue_type": "corrupted_asset", "label": "Source artwork failure", "scene_id": "SC-94",
+                        "affected_area": "source artwork", "threshold": "Asset error rate above 10%",
+                        "condition": "Scene 94 is paused because its city backdrop file needs to be replaced.",
+                        "impact": "Other scenes can continue, but this trailer scene cannot finish until the artwork is replaced."},
+}
+
+INCIDENT_EFFICIENCY = {
+    "gpu_oom": .265, "worker_loss": .33, "queue_surge": .42,
+    "storage_pressure": .31, "network_latency": .45, "corrupted_asset": .38,
 }
 
 
@@ -115,7 +163,7 @@ def calculate_delivery_impact(production: Production) -> dict:
     healthy = [worker for worker in production.workers.values() if worker.healthy]
     throughput = sum(worker.frames_per_hour for worker in healthy)
     if production.incident_active and not production.recovery_action:
-        throughput *= .265 if production.incident_type == "gpu_oom" else .38
+        throughput *= INCIDENT_EFFICIENCY.get(production.incident_type or "", .38)
     elif production.recovery_action in {"prioritize-scenes", "add-workers"}:
         throughput *= .92
     elif production.recovery_action == "restart-workers":
@@ -149,7 +197,7 @@ def calculate_what_if(production: Production, workers_added: int = 0, deadline_m
     healthy_throughput = sum(w.frames_per_hour for w in production.workers.values() if w.healthy)
     throughput = healthy_throughput + max(0, min(10, workers_added)) * 46
     if production.incident_active:
-        throughput *= .92 if prioritize_critical else (.265 if production.incident_type == "gpu_oom" else .38)
+        throughput *= .92 if prioritize_critical else INCIDENT_EFFICIENCY.get(production.incident_type or "", .38)
     minutes_left = deadline_minutes if deadline_minutes is not None else max(
         1, int((production.trailer.deadline - utcnow()).total_seconds() / 60))
     completion_minutes = remaining / max(throughput, .01) * 60
@@ -180,17 +228,26 @@ def calculate_recovery_option(production: Production, action: str) -> dict:
     elif action == "restart-workers":
         raw_capacity = sum(worker.frames_per_hour for worker in production.workers.values())
         efficiency = .86
-    else:
+    elif action == "reduce-preview-quality":
         remaining *= .82
         efficiency = .82
+    else:
+        raw_capacity = sum(worker.frames_per_hour for worker in production.workers.values())
+        efficiency = .92
     throughput = max(.01, raw_capacity * efficiency)
     hours_left = max((production.trailer.deadline - utcnow()).total_seconds() / 3600, 1 / 60)
     completion_hours = remaining / throughput
     delay_minutes = max(0.0, (completion_hours - hours_left) * 60)
     spec = RECOVERY_SPECS[action]
+    if delay_minutes == 0:
+        deadline_result = "On time"
+    elif delay_minutes < 1:
+        deadline_result = "Less than 1 minute late"
+    else:
+        deadline_result = f"{int(delay_minutes // 60)}h {int(delay_minutes % 60)}m late"
     return {"projected_throughput_fph": round(throughput, 1),
             "projected_delay_minutes": round(delay_minutes, 1),
-            "deadline_result": "On time" if delay_minutes == 0 else f"{int(delay_minutes // 60)}h {int(delay_minutes % 60)}m late",
+            "deadline_result": deadline_result,
             "estimated_added_cost_usd": spec["cost"]}
 
 
@@ -209,7 +266,10 @@ class ProductionEngine:
                              "gpu_memory_utilization": round(max(w.gpu_memory_utilization for w in p.workers.values()), 1),
                              "queue_depth": sum(s.remaining_frames for s in p.scenes.values()),
                              "critical_queue_depth": impact["remaining_critical_frames"],
-                             "throughput_fph": impact["current_throughput_fph"]})
+                             "throughput_fph": impact["current_throughput_fph"],
+                             "storage_utilization": p.storage_utilization,
+                             "network_latency_ms": p.network_latency_ms,
+                             "asset_error_rate": p.asset_error_rate})
         self.history[:] = self.history[-360:]
 
     def _seed_history(self) -> None:
@@ -241,34 +301,43 @@ class ProductionEngine:
             self.record("simulation_reset", workflow_state="ON_TRACK")
 
     def inject_gpu_oom(self) -> None:
-        with self.lock:
-            scene = self.production.scenes["SC-87"]
-            scene.retries += 1
-            scene.failed_frames += 24
-            for worker in list(self.production.workers.values())[:8]:
-                worker.healthy = False
-                worker.gpu_memory_utilization = 99.2
-                worker.gpu_utilization = 8
-                worker.current_scene_id = "SC-87"
-                worker.retries += 1
-            self.production.incident_active = True
-            self.production.incident_type = "gpu_oom"
-            self.production.incident_started_at = utcnow()
-            self.production.workflow_state = "INVESTIGATING"
-            self.production.verification_complete = False
-            self.production.recovery_failed = False
-            self.production.recovery_progress = 0
-            self.production.recovery_baseline = None
-            self.production.verification_snapshot = None
-            self.record("gpu_oom_injected", scene_id="SC-87", failed_workers=8, workflow_state="INVESTIGATING")
+        self.inject_incident("gpu-oom")
 
     def inject_corrupted_asset(self) -> None:
+        self.inject_incident("corrupted-asset")
+
+    def inject_incident(self, scenario_id: str) -> None:
+        if scenario_id not in INCIDENT_SCENARIOS:
+            raise ValueError("unsupported incident scenario")
         with self.lock:
-            scene = self.production.scenes["SC-94"]
-            scene.retries += 3
-            scene.failed_frames += 36
+            scenario = INCIDENT_SCENARIOS[scenario_id]
+            scene = self.production.scenes[scenario["scene_id"]]
+            scene.retries += 1
+            scene.failed_frames += 36 if scenario_id == "corrupted-asset" else 24
+            if scenario_id == "gpu-oom":
+                for worker in list(self.production.workers.values())[:8]:
+                    worker.healthy = False
+                    worker.gpu_memory_utilization = 99.2
+                    worker.gpu_utilization = 8
+                    worker.current_scene_id = scenario["scene_id"]
+                    worker.retries += 1
+            elif scenario_id == "worker-loss":
+                for worker in list(self.production.workers.values())[:6]:
+                    worker.healthy = False
+                    worker.gpu_utilization = 0
+                    worker.current_scene_id = scenario["scene_id"]
+            elif scenario_id == "queue-surge":
+                for scene_id in self.production.trailer.scene_ids:
+                    self.production.scenes[scene_id].total_frames += 180
+            elif scenario_id == "storage-pressure":
+                self.production.storage_utilization = 96.0
+            elif scenario_id == "network-latency":
+                self.production.network_latency_ms = 240.0
+            elif scenario_id == "corrupted-asset":
+                scene.retries += 2
+                self.production.asset_error_rate = 18.0
             self.production.incident_active = True
-            self.production.incident_type = "corrupted_asset"
+            self.production.incident_type = scenario["issue_type"]
             self.production.incident_started_at = utcnow()
             self.production.workflow_state = "INVESTIGATING"
             self.production.verification_complete = False
@@ -276,12 +345,17 @@ class ProductionEngine:
             self.production.recovery_progress = 0
             self.production.recovery_baseline = None
             self.production.verification_snapshot = None
-            self.record("corrupted_asset_injected", scene_id="SC-94", asset="nova_city.exr",
-                        workflow_state="INVESTIGATING")
+            evidence = {"asset": "nova_city.exr"} if scenario_id == "corrupted-asset" else {}
+            if scenario_id in {"gpu-oom", "worker-loss"}:
+                evidence["failed_workers"] = 8 if scenario_id == "gpu-oom" else 6
+            self.record(f"{scenario['issue_type']}_injected", scene_id=scenario["scene_id"],
+                        threshold=scenario["threshold"], workflow_state="INVESTIGATING", **evidence)
 
     def request_approval(self, action: str) -> Approval:
         if action not in RECOVERY_SPECS:
             raise ValueError("unsupported recovery action")
+        if action == self.production.last_failed_action:
+            raise ValueError("the previous recovery did not verify; choose a revised action")
         with self.lock:
             approval = Approval(str(uuid.uuid4()), action, utcnow(), utcnow() + timedelta(minutes=10))
             self.production.approvals[approval.id] = approval
@@ -308,6 +382,7 @@ class ProductionEngine:
             self.production.verification_complete = False
             self.production.recovery_baseline = self.status()
             self.production.recovery_action = action
+            self.production.last_failed_action = None
             self.production.recovery_progress = 1
             self.production.recovery_failed = False
             self.production.added_cost_usd += spec["cost"]
@@ -330,6 +405,14 @@ class ProductionEngine:
                 for scene in self.production.scenes.values():
                     if scene.trailer_critical:
                         scene.total_frames = max(scene.completed_frames, math.ceil(scene.total_frames * .82))
+            elif action == "restore-asset":
+                self.production.scenes["SC-94"].failed_frames = 0
+            elif action == "rebalance-queue":
+                for scene in self.production.scenes.values():
+                    scene.priority = 220 if scene.trailer_critical else 1
+            self.production.storage_utilization = 65
+            self.production.network_latency_ms = 14
+            self.production.asset_error_rate = 0
             execution_id = str(uuid.uuid4())
             self.record("recovery_executed", approval_id=approval_id, execution_id=execution_id, action=action,
                         approved_by=approved_by, added_cost_usd=spec["cost"])
@@ -348,7 +431,8 @@ class ProductionEngine:
                     worker.gpu_memory_utilization = round(67 + math.sin(phase / 1.7) * 7 + (index % 4), 1)
             if p.incident_active and p.workflow_state == "INVESTIGATING" and p.tick_count % 4 == 0:
                 p.workflow_state = "DECISION_REQUIRED"
-                scene_id = "SC-94" if p.incident_type == "corrupted_asset" else "SC-87"
+                scene_id = next((item["scene_id"] for item in INCIDENT_SCENARIOS.values()
+                                 if item["issue_type"] == p.incident_type), "SC-87")
                 self.record("investigation_completed", scene_id=scene_id, workflow_state="DECISION_REQUIRED")
             if p.recovery_action:
                 p.recovery_progress = min(100, p.recovery_progress + 12)
@@ -361,6 +445,7 @@ class ProductionEngine:
                         p.recovery_failed = True
                         p.verification_complete = False
                         p.workflow_state = "DECISION_REQUIRED"
+                        p.last_failed_action = p.recovery_action
                         self.record("recovery_verification_failed", reason="Throughput remains below required rate",
                                     workflow_state="DECISION_REQUIRED")
                     else:
@@ -371,14 +456,15 @@ class ProductionEngine:
                     p.recovery_action = None
                     p.verification_snapshot = self.status()
                     if p.verification_complete:
-                        scene_id = "SC-94" if p.incident_type == "corrupted_asset" else "SC-87"
+                        scene_id = next((item["scene_id"] for item in INCIDENT_SCENARIOS.values()
+                                         if item["issue_type"] == p.incident_type), "SC-87")
                         self.record("recovery_verified", scene_id=scene_id, workflow_state="PRODUCTION_SAVED")
             elif not p.incident_active:
                 for scene in p.scenes.values():
                     scene.completed_frames = min(scene.total_frames, scene.completed_frames + (2 if scene.trailer_critical else 1))
-            elif p.incident_type == "gpu_oom":
-                # Failed retries add to the queue while Scene 87 remains blocked.
-                p.scenes["SC-87"].total_frames += 2
+            elif p.incident_type in {"gpu_oom", "queue_surge"}:
+                affected = "SC-87" if p.incident_type == "gpu_oom" else "SC-82"
+                p.scenes[affected].total_frames += 2
             self._append_history()
 
     def status(self) -> dict:
@@ -394,6 +480,7 @@ class ProductionEngine:
                     "incident_trace_id": p.incident_trace_id,
                     "recovery_progress": round(p.recovery_progress, 1), "verification_complete": p.verification_complete,
                     "recovery_failed": p.recovery_failed,
+                    "last_failed_action": p.last_failed_action,
                     "trailer": {**asdict(p.trailer), "deadline": p.trailer.deadline.isoformat(),
                                 "completion_percent": round((critical_total - critical_remaining) / critical_total * 100, 1)},
                     "full_film": {**asdict(p.full_film), "deadline": p.full_film.deadline.isoformat()},
@@ -403,4 +490,7 @@ class ProductionEngine:
                     "gpu_workers_total": len(p.workers),
                     "gpu_workers_active": sum(1 for w in p.workers.values() if w.healthy),
                     "gpu_memory_utilization": round(max(w.gpu_memory_utilization for w in p.workers.values()), 1),
+                    "storage_utilization": p.storage_utilization,
+                    "network_latency_ms": p.network_latency_ms,
+                    "asset_error_rate": p.asset_error_rate,
                     "retries_total": sum(s.retries for s in p.scenes.values())}

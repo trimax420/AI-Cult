@@ -45,9 +45,10 @@ async def _call_mcp(tool_name: str, arguments: dict) -> dict:
 
 
 async def grafana_query_metrics() -> dict:
-    """Query current Project Nova GPU memory, throughput, and critical queue metrics through Grafana MCP."""
+    """Query current Project Nova capacity, queue, storage, transfer, and asset health through Grafana MCP."""
     expression = ('{__name__=~"render_(gpu_memory_utilization_percent|current_throughput_per_hour|'
-                  'required_throughput_per_hour|queue_critical_depth|asset_error_rate_percent)",production_id="project-nova"}')
+                  'required_throughput_per_hour|queue_critical_depth|asset_error_rate_percent|'
+                  'storage_utilization_percent|network_latency_ms|gpu_workers_active)",production_id="project-nova"}')
     result = await _call_mcp("query_prometheus", {
         "datasourceUid": "prometheus", "expr": expression, "queryType": "instant", "endTime": "now"
     })
@@ -59,7 +60,9 @@ async def grafana_query_metrics() -> dict:
 
 async def grafana_query_logs() -> dict:
     """Find recent render errors through Grafana MCP and Loki; use the newest incident log."""
-    query = '{service_name="render-farm-simulator"} |~ "CUDA out of memory|checksum mismatch"'
+    query = ('{service_name="render-farm-simulator"} |~ '
+             '"CUDA out of memory|checksum mismatch|stopped responding|safe working limit|'
+             'taking too long|critical queue|production issue"')
     result = await _call_mcp("query_loki_logs", {
         "datasourceUid": "loki", "logql": query, "limit": 10, "format": "compact",
         "startRfc3339": datetime.fromtimestamp(_incident_start(), timezone.utc).isoformat(), "endRfc3339": "now"
