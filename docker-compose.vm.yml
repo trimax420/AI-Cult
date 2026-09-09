@@ -1,0 +1,33 @@
+# Compute Engine deployment; uses the attached VM service account for Vertex AI.
+services:
+  lgtm:
+    restart: unless-stopped
+    ports: !override
+      - "0.0.0.0:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set a strong Grafana password}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+  render-simulator:
+    restart: unless-stopped
+  operator-dashboard:
+    restart: unless-stopped
+    ports: !override
+      - "0.0.0.0:80:8080"
+    volumes:
+      - ./deploy/nginx-vm.conf:/etc/nginx/templates/default.conf.template:ro
+  grafana-mcp:
+    restart: unless-stopped
+    environment:
+      GRAFANA_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set a strong Grafana password}
+      MCP_GRAFANA_SERVER_TOKEN: ${GRAFANA_MCP_AUTH_TOKEN:?Set a random MCP token}
+  production-director-agent:
+    restart: unless-stopped
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: ""
+    volumes: !reset []
+  grafana-provisioner:
+    environment:
+      GRAFANA_USERNAME: admin
+      GRAFANA_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set a strong Grafana password}

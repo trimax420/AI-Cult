@@ -9,7 +9,9 @@ from urllib.request import Request, urlopen
 GRAFANA_URL = os.getenv("GRAFANA_URL", "http://lgtm:3000")
 PROMETHEUS_UID = os.getenv("GRAFANA_PROMETHEUS_DATASOURCE_UID", "prometheus")
 LOKI_UID = os.getenv("GRAFANA_LOKI_DATASOURCE_UID", "loki")
-token = base64.b64encode(b"admin:admin").decode()
+username = os.getenv("GRAFANA_USERNAME", "admin")
+password = os.getenv("GRAFANA_PASSWORD", "admin")
+token = base64.b64encode(f"{username}:{password}".encode()).decode()
 headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
 
 

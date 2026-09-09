@@ -1,6 +1,10 @@
 # ReelWarden — Protect every delivery
 
-ReelWarden is a hackathon demo for operating a shared studio render portfolio. It first prevents a delivery conflict by reallocating capacity between two productions, then turns observability evidence into a production incident decision:
+ReelWarden helps film producers answer: **Will we make our deadline, and should we act?** It combines shared production capacity, Google ADK with Gemini on Vertex AI, and live evidence from the official Grafana MCP server. A producer can compare delivery forecasts and costs, approve a plan, and inspect the evidence behind recovery.
+
+**Hosted demo:** [Open ReelWarden](http://136.64.140.65/) · [Inspect Grafana evidence](http://136.64.140.65:3000/d/ai-production-director/reelwarden-c2b7-production-observability). This is a shared demo; resets and approvals affect all visitors.
+
+The render farm and film workloads are simulated; Gemini inference and Grafana MCP calls run live. The studio portfolio can first resolve a delivery conflict between two productions, then investigate a production incident:
 
 > Scene 87 is failing with GPU memory exhaustion. The trailer will miss delivery unless an operator approves recovery.
 
@@ -173,6 +177,33 @@ Before recording, wait for the portfolio recommendation, approve the transfer, w
 
 For deployment preparation, `./deploy/deploy-cloud-run.sh --dry-run` renders the manifest after checking required environment variables; it does not deploy. The hosted demo remains a single-instance simulation with ephemeral state and no authentication or tenant isolation.
 
+## Host on a Google Compute Engine VM
+
+The VM deployment runs the same Docker Compose services together. Use Debian 12, an `e2-medium` (4 GB RAM), a 30 GB balanced boot disk, and the 2 GB swap configured by `deploy/setup-vm.sh`. No GPU is required: the worker pool is simulated and model inference runs on Vertex AI.
+
+Attach a dedicated service account with `roles/aiplatform.user`, enable the Compute Engine and Vertex AI APIs, and use the `cloud-platform` access scope. The VM override removes the local credential-file mount so Application Default Credentials use the attached VM identity.
+
+Use an ephemeral external IP. Permit TCP 80 for the dashboard and TCP 3000 for read-only Grafana on this VM's network tag. The deployment does not create backup schedules, snapshots, an Ops Agent, Cloud Logging export, a load balancer, or Grafana Cloud resources. Grafana's local telemetry is required by the application. VM, disk, external IPv4, network usage, and Vertex AI calls still have their normal usage charges.
+
+Run `deploy/setup-vm.sh` once as root on the fresh VM. Place the repository source in `/opt/reelwarden`, then run:
+
+```bash
+sudo bash /opt/reelwarden/deploy/start-vm-app.sh
+```
+
+This generates a root-readable `.env` on the VM, obtains project/IP information from metadata, creates random Grafana and MCP credentials, and builds the agent profile. It uses `docker-compose.yml` plus `docker-compose.vm.yml`. Public Grafana access has the Viewer role; the ADK playground and MCP endpoint remain private. No service-account key needs to be downloaded.
+
+Check the deployment:
+
+```bash
+curl http://localhost:8080/readiness
+curl http://localhost:3000/api/health
+sudo docker compose -f /opt/reelwarden/docker-compose.yml \
+  -f /opt/reelwarden/docker-compose.vm.yml --profile agent ps -a
+```
+
+The dashboard is `http://VM_IP/` and Grafana is `http://VM_IP:3000/`. These are HTTP demo endpoints; enabling a firewall port alone does not configure HTTPS. An ephemeral address may change after a VM stop/start; update `GRAFANA_PUBLIC_URL` and the shared project URL if that happens. Docker volumes preserve local state on the VM's disk. There are no automatic backups.
+
 ## API guide
 
 The interactive API reference is available at `/docs` on the simulator port.
@@ -309,7 +340,7 @@ Grafana datasource UIDs are configured with `GRAFANA_PROMETHEUS_DATASOURCE_UID`,
 ## Important boundaries
 
 - The default local mode remains usable without a Google account, but the full agent demonstration requires the ADK profile.
-- Google Cloud is used only for Gemini/Vertex AI in the optional agent mode.
+- Google Cloud provides Gemini/Vertex AI in agent mode and Compute Engine for the optional VM deployment.
 - This is a hackathon simulator: no real compute workers, tenant isolation, user authentication, or production infrastructure mutations are performed.
 - Do not commit `.env`, API keys, or Google credentials.
 
@@ -328,7 +359,7 @@ Before submission:
 - Confirm eligibility, team membership (maximum four), original work during the contest, and rights to included assets.
 - Ask the organizers whether their AI-tooling restriction includes development-time coding assistants. Do not assume runtime-only scope.
 
-The hosted URL, video, and Devpost form are not yet prepared. The configured GitHub URL returned 404 to an unauthenticated check; public visibility still needs verification. Local commit history begins August 26, 2026, which is within the contest period but does not independently prove originality.
+An English 2:56 demo video has been prepared separately. Video assets are excluded from this repository. The public video URL and completed Devpost form must be supplied by the entrant; verify repository visibility in a signed-out browser before submission.
 
 Deadline: September 9, 2026, 2:00 PM PDT (September 10, 2:30 AM IST).
 
