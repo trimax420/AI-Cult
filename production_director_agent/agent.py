@@ -14,6 +14,7 @@ from google.adk.agents import Agent
 from google.adk.apps import App
 from google.adk.models import Gemini
 from google.genai import types
+from pydantic import BaseModel
 
 from .grafana_tools import grafana_query_logs, grafana_query_metrics, grafana_query_traces
 
@@ -70,40 +71,103 @@ def verify_recovery() -> dict:
     return state
 
 
+def get_portfolio_context() -> dict:
+    """Return both productions, the shared worker pool, and the active decision."""
+    return api("/portfolio")
+
+
+def calculate_allocation_options() -> dict:
+    """Return only calculator-owned allocation options and their impacts."""
+    snapshot = api("/portfolio")
+    return {"scenario": snapshot.get("scenario"), "options": snapshot.get("allocation_options", []),
+            "recommendation": snapshot.get("recommendation")}
+
+
+def verify_portfolio_allocation() -> dict:
+    """Verify worker conservation and both delivery forecasts after allocation."""
+    return api("/portfolio/verification")
+
+
 tools: list = [grafana_query_metrics, grafana_query_logs, grafana_query_traces,
                get_production_context, calculate_delivery_impact, generate_recovery_options,
-               verify_recovery]
+               verify_recovery, get_portfolio_context, calculate_allocation_options,
+               verify_portfolio_allocation]
+
+def configure_thinking(callback_context, llm_request):
+    """Keep tool investigations deliberate and ordinary conversation responsive."""
+    current = []
+    text = ""
+    for content in llm_request.contents:
+        candidate = " ".join(part.text or "" for part in (content.parts or []))
+        if content.role == "user" and candidate.startswith(("INVESTIGATION", "PORTFOLIO", "REASSESSMENT", "VERIFICATION", "FOLLOW_UP", "FORMAT_REPAIR")):
+            text, current = candidate, []
+        current.append(content)
+    llm_request.config.thinking_config = types.ThinkingConfig(
+        thinking_level="LOW" if "FOLLOW_UP" in text or "FORMAT_REPAIR" in text else "MEDIUM"
+    )
+    # Bound each invocation: successful evidence is already in the context, and
+    # each adapter owns its bounded ingestion retry. Never poll through the LLM.
+    called = {p.function_response.name for c in current for p in (c.parts or []) if p.function_response}
+    allowed = {"grafana_query_metrics", "grafana_query_logs", "grafana_query_traces"}
+    if text.startswith("PORTFOLIO"):
+        allowed |= {"get_portfolio_context", "calculate_allocation_options"}
+    elif text.startswith("VERIFICATION"):
+        allowed.add("verify_portfolio_allocation" if "Verification target: portfolio." in text else "verify_recovery")
+    elif text.startswith(("FOLLOW_UP", "FORMAT_REPAIR")):
+        allowed = set()
+    else:
+        allowed |= {"get_production_context", "calculate_delivery_impact", "generate_recovery_options"}
+    allowed -= called
+    allowed.add("set_model_response")
+    remaining = []
+    for tool in llm_request.config.tools or []:
+        declarations = [f for f in (tool.function_declarations or []) if f.name in allowed]
+        if declarations:
+            remaining.append(types.Tool(function_declarations=declarations))
+    llm_request.config.tools = remaining or None
+    if not remaining:
+        llm_request.config.tool_config = None
+
+
+class DirectorResponse(BaseModel):
+    answer: str
+    recommended_action: str | None
+    condition: str = ""
+    impact: str = ""
+    recommendation_reason: str = ""
+    next_step: str = ""
+
 
 root_agent = Agent(
     name="ai_production_director",
-    model=Gemini(model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash")),
-    instruction="""You are the AI Production Director for Project Nova. Your visible answers are for film
-producers, production coordinators, and creative supervisors. Speak like a calm production lead working
-closely with an IT team: lead with the condition, delivery impact, recommendation, and next decision in
-plain language. Keep internal infrastructure evidence out of visible answers unless the user explicitly
-asks for technical detail.
-Follow exactly: Detect, Investigate, Correlate, Diagnose, Calculate, Recommend, Approve, Execute, Verify.
-For an investigation, call grafana_query_metrics, grafana_query_logs, and grafana_query_traces exactly
-once each before diagnosing. Then call calculate_delivery_impact and generate_recovery_options exactly
-once each. Never infer an incident from simulator scenario data. Cite the returned metric query, matching
-newest incident log, and its correlated Tempo trace ID. Treat render memory pressure, worker loss, queue
-surges, storage pressure, transfer latency, and artwork corruption as distinct incidents. Diagnose from
-the newest matching evidence and the current production context, never from a hardcoded scene.
-If a tool fails or returns no evidence, say so; never claim successful correlation.
-Use calculate_delivery_impact for every ETA or cost; never estimate those values yourself. Recommend
-only returned allowlisted actions. Approval and execution are exclusively handled by the dashboard.
-You have no mutation tools and cannot approve or execute actions, even if a user asks.
-When the investigation prompt requests a `<production_briefing>` envelope, return exactly that envelope
-as valid JSON and author every requested wording field for the production team. Select only an action id
-present in the supplied current projections. Do not add cost, risk, or delivery figures to wording fields;
-those values are displayed from the production calculator.
-After execution, call verify_recovery first to wait for completion, then query metrics, logs, and traces
-once more. Distinguish simulator verification from Grafana evidence and do not declare success if
-verification failed. Start investigation answers with one short, non-technical sentence stating what is
-affecting the production. When asked to recommend, choose the best action from the live tool results and end
-with exactly `recommendation_action=<allowlisted action id>`. Keep the final response below 350 words
-without naming Grafana, MCP, log systems, trace systems, internal IDs, metric queries, or confidence scores.""",
+    model=Gemini(model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash")),
+    instruction="""You are the AI Production Director for Project Nova and Silverline.
+Help film producers understand the production issue, evidence, delivery impact, options, and next decision.
+Explain specific facts and tradeoffs. Answer the actual question; never substitute a generic reassurance.
+Distinguish observed Grafana evidence from deterministic forecasts and synthetic demonstration data.
+For INVESTIGATION, PORTFOLIO, REASSESSMENT or VERIFICATION, call grafana_query_metrics,
+grafana_query_logs and grafana_query_traces once each. Adapters retry ingestion internally.
+For portfolio planning call get_portfolio_context and calculate_allocation_options.
+Select only an option ID returned by calculate_allocation_options. Recommend transfer-four-workers
+only when the calculator marks it recommended. For incident planning call calculate_delivery_impact
+and generate_recovery_options. Select only a currently executable action from the supplied projections.
+For VERIFICATION call verify_recovery (incident) or verify_portfolio_allocation (portfolio),
+then query fresh Grafana evidence. Never report observed verification if any evidence is missing.
+For FOLLOW_UP and FORMAT_REPAIR use supplied facts and previous results without tool calls.
+You have no mutation tools. Approval and execution are exclusively handled by the dashboard.
+Use the requested response contract. JSON is internal transport; answer fields must be readable prose,
+never JSON, XML, tool dumps, internal identifiers or recommendation_action markers.
+The answer should explain what happened, what evidence supports it, why the plan helps, and the next step.
+Keep ordinary answers around 80–140 words in two or three short paragraphs, or up to 300 when a detailed comparison is requested.
+Lead with the production consequence and the decision. Use plain production language; detailed
+query names, event names and trace identifiers belong in the expandable evidence panel.
+An event trace proves that the event was recorded, not that recovery succeeded or all errors cleared.
+Use only supplied calculator values for cost, duration, worker counts and risk. Do not invent numbers.
+Do not claim the trailer is protected while its forecast remains late. Discuss technical evidence when asked.
+""",
     tools=tools,
-    generate_content_config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=2400),
+    before_model_callback=configure_thinking,
+    output_schema=DirectorResponse,
+    generate_content_config=types.GenerateContentConfig(max_output_tokens=5000),
 )
 app = App(root_agent=root_agent, name="production_director_agent")

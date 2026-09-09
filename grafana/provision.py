@@ -7,6 +7,8 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 GRAFANA_URL = os.getenv("GRAFANA_URL", "http://lgtm:3000")
+PROMETHEUS_UID = os.getenv("GRAFANA_PROMETHEUS_DATASOURCE_UID", "prometheus")
+LOKI_UID = os.getenv("GRAFANA_LOKI_DATASOURCE_UID", "loki")
 token = base64.b64encode(b"admin:admin").decode()
 headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
 
@@ -24,7 +26,9 @@ def call(path: str, method: str = "GET", body: dict | None = None):
         raise RuntimeError(f"Grafana {method} {path} failed: {error.read().decode()}") from error
 
 
-dashboard = json.loads(Path("/config/dashboard.json").read_text())
+dashboard = json.loads(Path("/config/dashboard.json").read_text()
+                       .replace('"uid":"prometheus"', f'"uid":"{PROMETHEUS_UID}"')
+                       .replace('"uid":"loki"', f'"uid":"{LOKI_UID}"'))
 call("/api/dashboards/db", "POST", {"dashboard": dashboard, "folderUid": "", "overwrite": True})
 
 folder_uid = "ai-production-alerts"
@@ -42,7 +46,7 @@ for definition in json.loads(Path("/config/rules.json").read_text()):
                    "service": "render-farm-simulator"},
         "data": [
             {"refId": "A", "queryType": "", "relativeTimeRange": {"from": 300, "to": 0},
-             "datasourceUid": "prometheus", "model": {"editorMode": "code", "expr": definition["expression"],
+             "datasourceUid": PROMETHEUS_UID, "model": {"editorMode": "code", "expr": definition["expression"],
              "instant": True, "intervalMs": 1000, "maxDataPoints": 43200, "range": False, "refId": "A"}},
             {"refId": "B", "queryType": "", "relativeTimeRange": {"from": 0, "to": 0},
              "datasourceUid": "__expr__", "model": {"expression": "A", "reducer": "last",
@@ -63,4 +67,4 @@ if group and group.get("interval") != 10:
     group["interval"] = 10
     call(group_path, "PUT", group)
 
-print("Project Nova dashboard and alerts provisioned")
+print("Portfolio dashboard and Project Nova alerts provisioned")

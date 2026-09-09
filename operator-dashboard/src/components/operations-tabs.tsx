@@ -19,7 +19,7 @@ type OperationsTabProps = {
 
 function incidentLabel(state: RenderState) {
   if (state.scenario === "corrupted_asset") return "Scene 94 asset validation failure"
-  if (state.incident_active) return "Scene 87 GPU memory exhaustion"
+  if (state.incident_active) return ({gpu_oom:"Scene 87 render memory pressure",worker_loss:"Scene 91 render worker loss",queue_surge:"Scene 82 trailer queue surge",storage_pressure:"Scene 97 storage pressure",network_latency:"Scene 84 transfer slowdown"} as Record<string,string>)[state.scenario] ?? "Production incident"
   return "No active render incident"
 }
 

@@ -1,8 +1,9 @@
 import {
   BellIcon,
-  CircleGaugeIcon,
+  WorkflowIcon,
   ClipboardListIcon,
   FilmIcon,
+  LayoutDashboardIcon,
   ShieldAlertIcon,
   WrenchIcon,
 } from "lucide-react"
@@ -21,7 +22,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 
-export type DashboardView = "overview" | "incidents" | "recovery" | "audit"
+export type DashboardView = "overview" | "incidents" | "recovery" | "audit" | "architecture"
 
 type AppSidebarProps = {
   activeView?: DashboardView
@@ -30,10 +31,11 @@ type AppSidebarProps = {
 }
 
 const nav = [
-  { label: "Overview", icon: CircleGaugeIcon, view: "overview" as const },
-  { label: "Incidents", icon: ShieldAlertIcon, view: "incidents" as const },
-  { label: "Recovery", icon: WrenchIcon, view: "recovery" as const },
+  { label: "Production Portfolio", icon: LayoutDashboardIcon, view: "overview" as const },
+  { label: "Production Risks", icon: ShieldAlertIcon, view: "incidents" as const },
+  { label: "Decisions & Actions", icon: WrenchIcon, view: "recovery" as const },
   { label: "Audit", icon: ClipboardListIcon, view: "audit" as const },
+  { label: "How it works", icon: WorkflowIcon, view: "architecture" as const },
 ]
 
 export function AppSidebar({ activeView = "overview", incidentCount = 0, onNavigate = () => undefined }: AppSidebarProps) {
@@ -48,7 +50,7 @@ export function AppSidebar({ activeView = "overview", incidentCount = 0, onNavig
     <Sidebar collapsible="icon">
       <SidebarHeader className="brand-header">
         <div className="brand-mark"><FilmIcon /></div>
-        <div className="brand-copy"><strong>AI Production</strong><span>Director</span></div>
+        <div className="brand-copy"><strong>ReelWarden</strong><span>Protect every delivery</span></div>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
@@ -59,6 +61,7 @@ export function AppSidebar({ activeView = "overview", incidentCount = 0, onNavig
                   <SidebarMenuButton
                     tooltip={item.label}
                     isActive={activeView === item.view}
+                    aria-current={activeView === item.view ? "page" : undefined}
                     onClick={() => navigate(item.view)}
                   >
                     <item.icon />

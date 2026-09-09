@@ -1,25 +1,32 @@
-# AI Production Director — Project Nova
+# ReelWarden — Protect every delivery
 
-AI Production Director is a hackathon demo for operating a simulated film render farm. It turns observability evidence into a production decision:
+ReelWarden is a hackathon demo for operating a shared studio render portfolio. It first prevents a delivery conflict by reallocating capacity between two productions, then turns observability evidence into a production incident decision:
 
 > Scene 87 is failing with GPU memory exhaustion. The trailer will miss delivery unless an operator approves recovery.
 
-The app monitors a local render-farm simulator and turns incidents into a continuous, production-friendly conversation. During an active issue, the AI Production Director explains what is happening, assesses the trailer and schedule impact, recommends one recovery, and stays with the team through approval and verification. Technical evidence continues to be collected in the background. The agent checks fresh Grafana evidence, while calculated production data keeps the same friendly experience available if the live AI is temporarily unavailable.
+The app monitors a local render-farm simulator and turns incidents into a continuous, production-friendly conversation. During an active issue, the AI Production Director explains what is happening, assesses the trailer and schedule impact, recommends one recovery, and stays with the team through approval and verification. Technical evidence continues to be collected in the background. The agent checks fresh Grafana evidence, while calculated production data keeps the same friendly experience available with an explicit calculated mode if live AI is temporarily unavailable.
 
 ## What is included
 
-- **Project Nova simulator**: 20 virtual GPU workers, trailer and full-film deliverables, trailer-critical scenes, render queues, costs, retries, and deterministic ETA calculations.
+- **Two-production portfolio**: Project Nova and Silverline share one conserved pool of 32 virtual GPU workers.
+- **Deterministic allocation planner**: compares current allocation, a four-worker transfer, two temporary workers, and trailer prioritization with calculator-owned time, cost, risk, and throughput.
+- **Project Nova incident simulator**: trailer and full-film deliverables, trailer-critical scenes, render queues, costs, retries, and deterministic ETA calculations.
 - **Production incident catalogue**: render-capacity pressure, worker loss, queue surge, storage pressure, transfer latency, and corrupted assets, each tied to an explicit telemetry threshold and affected trailer scene.
 - **Additional demo paths**: recovery verification failure with an AI-generated revised plan, and a non-mutating what-if calculator.
 - **Local observability**: OpenTelemetry, Grafana, Prometheus, Loki, and Tempo through `grafana/otel-lgtm`.
 - **AI-first incident workspace**: one production-scoped conversation spanning investigation, recommendation, approval, recovery, and verification.
 - **Durable production memory**: SQLite stores incidents, agent runs, messages, decisions, and verified outcomes, including a seeded Silverline trailer case for relevant comparisons.
 - **Approval protection**: every recovery action needs a valid, short-lived, single-use approval ID.
+- **Portfolio approval protection**: the recommended four-worker transfer is approval-gated, auditable, single-use, and reversible only through a new approved decision.
 - **Google ADK agent**: Gemini queries local Grafana MCP, selects one currently valid recovery action, and remains in the same incident-scoped session for follow-ups and reassessment.
 
 ## Architecture
 
 ```text
+Nova + Silverline portfolio → deterministic allocation planner
+              ↓                         ↓
+        Human approval           shared-worker verification
+
 Render simulator → OpenTelemetry → Local Grafana LGTM
                                       ↓
 Operator dashboard ← deterministic impact calculator ← Grafana MCP ← Gemini ADK
@@ -29,7 +36,7 @@ Human approval → recovery API → simulator → fresh Grafana verification
 
 ## Quick start: fully local demo
 
-This mode needs only Docker Desktop. It can run without Google Cloud, Gemini, or API keys; if the live agent is unavailable, the production team still receives a friendly calculated assessment without infrastructure errors being exposed.
+This mode needs only Docker Desktop. It can run without Google Cloud, Gemini, or API keys; the dashboard starts without the optional agent. Live reviews report their connection status; an operator can explicitly choose calculated plans after a failed review. Calculated plans are never presented as live AI verification.
 
 ```bash
 git clone https://github.com/trimax420/AI-Cult.git
@@ -67,13 +74,13 @@ docker compose down -v
 
 ## Run the three-minute demo
 
-1. Open http://localhost:4173 and show **Production on Track**.
-2. Choose one of the six production failure scenarios. Each option shows the telemetry threshold that raises it.
-3. The simulator changes the matching production telemetry and moves the affected trailer delivery behind schedule.
-4. The AI workspace opens automatically with a plain-language assessment, production impact, one recommended recovery, and a relevant earlier case when one exists.
-5. Ask follow-up questions about schedule, cost, risk, alternatives, affected scenes, or previous productions. The conversation remains available throughout the incident.
-6. Select **Review and approve**, then **Approve and start recovery**. The approval is audited and consumed once.
-7. Watch the AI monitor the recovery and confirm when the trailer is protected.
+1. Open http://localhost:4173 and show the healthy **Production Portfolio**.
+2. Select **Run deadline conflict**. Nova’s trailer workload increases without creating an incident.
+3. Compare all four deterministic allocation options. The four-worker transfer makes Nova on time while Silverline remains on time.
+4. Select **Review and approve**, inspect the effect on both productions, then approve the short-lived decision.
+5. Confirm all 32 workers are conserved and both delivery forecasts verify.
+6. Select **Continue demo** to raise Nova’s render-memory incident and enter the existing incident workspace.
+7. Review the Grafana-grounded recovery recommendation, approve it, and watch the AI confirm the trailer is protected.
 
 Useful alternate paths:
 
@@ -104,8 +111,8 @@ cp .env.example .env
 ```dotenv
 GOOGLE_GENAI_USE_VERTEXAI=TRUE
 GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
-GOOGLE_CLOUD_LOCATION=asia-south1
-GEMINI_MODEL=gemini-2.5-flash
+GOOGLE_CLOUD_LOCATION=global
+GEMINI_MODEL=gemini-3.8-flash
 ```
 
 ### 2. Start the agent profile
@@ -127,9 +134,9 @@ When an incident is raised, the simulator creates one durable investigation for 
 2. The matching affected-scene event from Loki.
 3. The matching incident trace from Tempo.
 
-The simulator recalculates current cost, schedule, and risk. The ADK agent authors the visible condition, trailer impact, recommendation rationale, next step, conversation update, and selected action as a guarded structured briefing. Cost, risk, and delivery timing remain calculator-owned and are validated separately. The agent does not execute anything: only a human can create and consume an approval through the recovery API. If the agent is temporarily unavailable, persisted production data keeps the workflow useful without exposing a technical error or fallback label.
+The simulator recalculates current cost, schedule, and risk. The ADK agent authors the visible condition, trailer impact, recommendation rationale, next step, conversation update, and selected action as a guarded structured briefing. Cost, risk, and delivery timing remain calculator-owned and are validated separately. The agent does not execute anything: only a human can create and consume an approval through the recovery API. If a live review fails, the UI shows a retry action. Calculated mode must be explicitly selected, and observed verification is never fabricated.
 
-To control Gemini spend, one normal demo uses two focused agent runs: investigation and post-recovery verification. There is no background LLM polling.
+To control Gemini spend, the full portfolio demo uses four focused runs: portfolio investigation, allocation verification, incident investigation, and recovery verification. Follow-up questions and failed-recovery reassessment add runs. There is no background LLM polling.
 
 ### Google AI Studio alternative
 
@@ -139,6 +146,32 @@ If you prefer an API key instead of Vertex AI, set the following in `.env`:
 GOOGLE_GENAI_USE_VERTEXAI=FALSE
 GEMINI_API_KEY=your_key_here
 ```
+
+
+### Current runtime and verification
+
+The verified model target is `gemini-3.8-flash`, using Google ADK 2.8.0 and google-genai 2.22.0. `GOOGLE_CLOUD_LOCATION=global` controls model routing independently of the Cloud Run deployment region. No other model is silently substituted.
+
+On macOS/Linux, Compose reads ADC from `$HOME/.config/gcloud/application_default_credentials.json`. Set `GOOGLE_ADC_PATH` to an absolute file path on Windows or for a custom location. The file must already exist; Compose will not create a directory in its place.
+
+The studio owns 32 base worker identities: Nova starts with 18 and Silverline with 14. Allocation changes synchronize Nova's incident engine. Approved temporary workers have distinct `TEMP-` identities and are reported separately. Portfolio delivery forecasts cover 12/24-hour planning windows; the incident workspace covers the immediate trailer window.
+
+Grafana queries validate each required series and correlate Loki/Tempo with an event trace. Evidence reads retry ingestion delays for up to 30 seconds. Recovery first passes simulator condition and delivery checks; a separate ADK run then verifies fresh observations. The SQLite `live_runs` table preserves phase, raw diagnostics, tool outcomes, and model usage. Reset invalidates unfinished callbacks while retaining history.
+
+Readiness and explicit recovery controls:
+
+```bash
+curl http://localhost:8080/readiness
+curl http://localhost:8080/evidence-context
+curl -X POST http://localhost:8080/agent/retry
+curl -X POST http://localhost:8080/agent/calculated-mode
+```
+
+`/readiness` checks ADK connectivity and reports the latest live evidence result without calling Gemini. Set `GRAFANA_PUBLIC_URL` to a judge-accessible Grafana dashboard URL for hosted use.
+
+Before recording, wait for the portfolio recommendation, approve the transfer, wait for live allocation verification, then continue into the incident. The same conversation remains available after recovery. Use **Simulate failed recovery** before approving an incident action to exercise reassessment.
+
+For deployment preparation, `./deploy/deploy-cloud-run.sh --dry-run` renders the manifest after checking required environment variables; it does not deploy. The hosted demo remains a single-instance simulation with ephemeral state and no authentication or tenant isolation.
 
 ## API guide
 
@@ -156,6 +189,20 @@ curl -X POST http://localhost:8080/simulation/incidents/storage-pressure
 curl http://localhost:8080/simulation/status
 curl http://localhost:8080/simulation/workers
 ```
+
+### Portfolio orchestration
+
+```bash
+curl http://localhost:8080/portfolio
+curl -X POST http://localhost:8080/portfolio/scenarios/deadline-conflict
+curl -X POST 'http://localhost:8080/portfolio/approvals?option_id=transfer-four-workers'
+curl -X POST http://localhost:8080/portfolio/allocations/transfer-four-workers \
+  -H 'Content-Type: application/json' \
+  -d '{"approval_id":"APPROVAL_ID","approved_by":"demo-operator"}'
+curl http://localhost:8080/portfolio/verification
+```
+
+Set `ENABLE_PORTFOLIO_DEMO=false` before the Docker build to return the hosted dashboard to the proven single-production landing view.
 
 ### Evidence and planning
 
@@ -182,8 +229,7 @@ The existing `/copilot/chat` route remains available as a compatibility wrapper.
 During an active incident, the dashboard requests only messages linked to that incident. Every follow-up
 is sent to the same production-and-incident-scoped Google ADK session, so an earlier incident's discussion
 cannot appear in the current workspace. The backend supplies the current calculated schedule, cost, risk,
-available actions, and verified prior case as authoritative context. Responses containing internal monitoring
-language or figures that conflict with the current calculation are replaced by a production-friendly assessment.
+available actions, and verified prior case as authoritative context. The backend parses final ADK responses before storing display text. Raw JSON, tool payloads, and internal IDs are excluded from conversation. Costs and quantities are checked against calculator facts and observed tool results; invalid responses receive one formatting repair attempt, then a visible retry state.
 
 Example what-if calculation:
 
@@ -236,6 +282,30 @@ npm run lint
 
 The Python tests cover Project Nova scheduling, all six threshold-driven incident scenarios, incident-scoped conversation isolation, ADK session reuse and action parsing, presentation safety, approval expiry/replay protection, what-if isolation, failed-action exclusion, recovery reassessment, and verification.
 
+Run the ADK boundary and evidence-retry tests inside the pinned agent image:
+
+```bash
+docker compose --profile agent exec production-director-agent python -m unittest production_director_agent.test_runtime -v
+```
+
+With the live local stack running, `python3 scripts/verify-live-demo.py` resets the simulation and exercises portfolio allocation, all six incidents, fresh Grafana verification, and failed recovery with a new approval. It uses the configured Gemini project. Each phase must report `live-agent`; there is no calculated substitute in this acceptance run.
+
+## Cloud Run packaging
+
+The deployment template at `deploy/cloudrun-service.yaml.template` describes one multi-container Cloud Run service: Nginx dashboard ingress on 8080, simulator on 8081, ADK agent on 8090, and the official Grafana MCP server on 8000. Containers communicate over localhost. Vertex AI uses the Cloud Run service account; Grafana and MCP credentials are Secret Manager references. The SQLite ledger is mounted on a 64 MiB in-memory volume, so demo state intentionally resets when the instance is replaced.
+
+The template enables instance-based CPU allocation so simulation ticks, telemetry export, and explicitly started ADK reviews continue after an HTTP response returns. This bills CPU for the instance lifetime; see [Cloud Run billing settings](https://docs.cloud.google.com/run/docs/configuring/billing-settings). The template limits the service to one instance.
+
+Build separate deployment images locally with `sh deploy/build-cloud-run-images.sh`. It produces `ai-cult-simulator:cloudrun`, `ai-cult-agent:cloudrun`, and `ai-cult-dashboard:cloudrun` using `linux/amd64`, as required by the [Cloud Run container contract](https://docs.cloud.google.com/run/docs/container-contract). This does not push images or deploy the service, and preserves the native local Compose images. Tagging and publishing these images to your Artifact Registry repository is a separate release step.
+
+Build and push the three repository images (`dashboard`, `simulator`, and `agent`), create the referenced secrets, export the variables validated by `deploy/deploy-cloud-run.sh`, then run:
+
+```bash
+./deploy/deploy-cloud-run.sh
+```
+
+Grafana datasource UIDs are configured with `GRAFANA_PROMETHEUS_DATASOURCE_UID`, `GRAFANA_LOKI_DATASOURCE_UID`, and `GRAFANA_TEMPO_DATASOURCE_UID` so local and Grafana Cloud stacks can differ without code changes. The Cloud Run simulator uses OTLP HTTP/protobuf: set `GRAFANA_CLOUD_OTLP_ENDPOINT` to the Grafana Cloud base endpoint ending in `/otlp` (the exporter adds `/v1/traces`, `/v1/metrics`, and `/v1/logs`). The `grafana-otlp-headers` secret contains the complete OpenTelemetry exporter header value required by the chosen Grafana Cloud OTLP endpoint.
+
 ## Important boundaries
 
 - The default local mode remains usable without a Google account, but the full agent demonstration requires the ADK profile.
@@ -243,7 +313,7 @@ The Python tests cover Project Nova scheduling, all six threshold-driven inciden
 - This is a hackathon simulator: no real compute workers, tenant isolation, user authentication, or production infrastructure mutations are performed.
 - Do not commit `.env`, API keys, or Google credentials.
 
-## Submission readiness — checked September 5, 2026
+## Submission readiness
 
 Intended track: **Grafana Labs**. The runtime uses Google ADK + Gemini on Vertex AI and the official `grafana/mcp-grafana` server. The simulator generates synthetic film-production telemetry; it does not operate a real render farm. Simulator verification and Grafana observations are separate evidence sources.
 

@@ -55,6 +55,7 @@ class Approval:
     expires_at: datetime
     used: bool = False
     approved_by: str | None = None
+    incident_started_at: datetime | None = None
 
 
 @dataclass
@@ -223,17 +224,17 @@ def calculate_recovery_option(production: Production, action: str) -> dict:
         raw_capacity += 220
         efficiency = .92
     elif action == "prioritize-scenes":
-        raw_capacity = sum(worker.frames_per_hour for worker in production.workers.values()) / 42 * 46
+        raw_capacity = len(production.workers) * 46
         efficiency = .92
     elif action == "restart-workers":
         raw_capacity = sum(worker.frames_per_hour for worker in production.workers.values())
         efficiency = .86
     elif action == "reduce-preview-quality":
-        remaining *= .82
+        remaining = sum(max(0, math.ceil(production.scenes[s].total_frames * .82) - production.scenes[s].completed_frames)
+                        for s in production.trailer.scene_ids)
         efficiency = .82
     else:
-        raw_capacity = sum(worker.frames_per_hour for worker in production.workers.values())
-        efficiency = .92
+        efficiency = 1.0
     throughput = max(.01, raw_capacity * efficiency)
     hours_left = max((production.trailer.deadline - utcnow()).total_seconds() / 3600, 1 / 60)
     completion_hours = remaining / throughput
@@ -336,6 +337,7 @@ class ProductionEngine:
             elif scenario_id == "corrupted-asset":
                 scene.retries += 2
                 self.production.asset_error_rate = 18.0
+            self.production.approvals.clear()
             self.production.incident_active = True
             self.production.incident_type = scenario["issue_type"]
             self.production.incident_started_at = utcnow()
@@ -357,7 +359,9 @@ class ProductionEngine:
         if action == self.production.last_failed_action:
             raise ValueError("the previous recovery did not verify; choose a revised action")
         with self.lock:
-            approval = Approval(str(uuid.uuid4()), action, utcnow(), utcnow() + timedelta(minutes=10))
+            if not self.production.incident_active or self.production.incident_type not in RECOVERY_SPECS[action]["incident_types"]:
+                raise ValueError("action does not apply to the active incident")
+            approval = Approval(str(uuid.uuid4()), action, utcnow(), utcnow() + timedelta(minutes=10), incident_started_at=self.production.incident_started_at)
             self.production.approvals[approval.id] = approval
             self.record("approval_requested", approval_id=approval.id, action=action)
             return approval
@@ -375,6 +379,10 @@ class ProductionEngine:
                 raise ValueError("a recovery is already executing")
             if not self.production.incident_active:
                 raise ValueError("no active incident to recover")
+            if approval.incident_started_at != self.production.incident_started_at:
+                raise ValueError("approval belongs to an earlier incident")
+            if action not in RECOVERY_SPECS or self.production.incident_type not in RECOVERY_SPECS[action]["incident_types"] or action == self.production.last_failed_action:
+                raise ValueError("action is no longer valid for this incident")
             approval.used = True
             approval.approved_by = approved_by
             spec = RECOVERY_SPECS[action]
@@ -389,7 +397,8 @@ class ProductionEngine:
             if action == "add-workers":
                 first_id = len(self.production.workers) + 1
                 for n in range(first_id, first_id + 2):
-                    self.production.workers[f"GPU-{n:02d}"] = Worker(f"GPU-{n:02d}", frames_per_hour=110)
+                    worker_id = f"TEMP-{uuid.uuid4().hex[:12]}"
+                    self.production.workers[worker_id] = Worker(worker_id, frames_per_hour=110, hourly_rate_usd=6.5)
             elif action == "prioritize-scenes":
                 for scene in self.production.scenes.values():
                     scene.priority = 200 if scene.trailer_critical else 1
@@ -440,7 +449,13 @@ class ProductionEngine:
                     scene = p.scenes[scene_id]
                     scene.completed_frames = min(scene.total_frames, scene.completed_frames + 18)
                 if p.recovery_progress >= 100:
-                    if p.fail_next_recovery:
+                    # A completed attempt changes the decision state. Unused
+                    # alternative tokens cannot authorize a reassessment.
+                    p.approvals = {key: token for key, token in p.approvals.items() if token.used}
+                    health = (p.storage_utilization < 90 and p.network_latency_ms < 150 and p.asset_error_rate < 10)
+                    impact = calculate_delivery_impact(p)
+                    passed = health and not impact["deadline_at_risk"] and impact["current_throughput_fph"] >= impact["required_throughput_fph"]
+                    if p.fail_next_recovery or not passed:
                         p.fail_next_recovery = False
                         p.recovery_failed = True
                         p.verification_complete = False

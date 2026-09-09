@@ -27,6 +27,9 @@ services:
       PRODUCTION_ID: project-nova
       INCIDENT_DB_PATH: /data/production-director.db
       PRODUCTION_AGENT_URL: http://production-director-agent:8090
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION:-global}
+      GRAFANA_PUBLIC_URL: ${GRAFANA_PUBLIC_URL:-http://localhost:3000/d/ai-production-director/ai-production-director}
     ports:
       - "127.0.0.1:${SIMULATOR_PORT:-8080}:8080"
     volumes:
@@ -41,6 +44,8 @@ services:
     restart: "no"
     environment:
       GRAFANA_URL: http://lgtm:3000
+      GRAFANA_PROMETHEUS_DATASOURCE_UID: ${GRAFANA_PROMETHEUS_DATASOURCE_UID:-prometheus}
+      GRAFANA_LOKI_DATASOURCE_UID: ${GRAFANA_LOKI_DATASOURCE_UID:-loki}
     depends_on:
       lgtm:
         condition: service_healthy
@@ -48,9 +53,14 @@ services:
   operator-dashboard:
     build:
       context: ./operator-dashboard
+      args:
+        VITE_ENABLE_PORTFOLIO_DEMO: ${ENABLE_PORTFOLIO_DEMO:-true}
     container_name: ai-production-operator-dashboard
+    environment:
+      SIMULATOR_UPSTREAM: http://render-simulator:8080
+      AGENT_UPSTREAM: http://production-director-agent:8090
     ports:
-      - "127.0.0.1:4173:80"
+      - "127.0.0.1:4173:8080"
     depends_on:
       - render-simulator
 
@@ -93,25 +103,28 @@ services:
       GOOGLE_API_KEY: ${GEMINI_API_KEY:-}
       GOOGLE_GENAI_USE_VERTEXAI: ${GOOGLE_GENAI_USE_VERTEXAI:-TRUE}
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-project-f5be723f-d87a-4652-b84}
-      GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION:-asia-south1}
+      GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION:-global}
       GOOGLE_APPLICATION_CREDENTIALS: /var/secrets/google/application_default_credentials.json
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
       GRAFANA_MCP_URL: ${GRAFANA_MCP_URL:-http://grafana-mcp:8000/mcp}
       GRAFANA_MCP_AUTH_TOKEN: ${GRAFANA_MCP_AUTH_TOKEN:-local-demo-mcp-token}
+      GRAFANA_PROMETHEUS_DATASOURCE_UID: ${GRAFANA_PROMETHEUS_DATASOURCE_UID:-prometheus}
+      GRAFANA_LOKI_DATASOURCE_UID: ${GRAFANA_LOKI_DATASOURCE_UID:-loki}
+      GRAFANA_TEMPO_DATASOURCE_UID: ${GRAFANA_TEMPO_DATASOURCE_UID:-tempo}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4318
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_EXPORTER_OTLP_INSECURE: "true"
       OTEL_SERVICE_NAME: production-director-agent
     ports:
       - "127.0.0.1:8090:8090"
-    # Google Cloud CLI stores Application Default Credentials under %APPDATA%
-    # on Windows. Long-form syntax avoids interpreting the drive-letter colon as
-    # a volume separator, and does not depend on a specific Windows user name.
+    # Override GOOGLE_ADC_PATH for Windows or a non-default ADC location.
     volumes:
       - type: bind
-        source: ${APPDATA}/gcloud/application_default_credentials.json
+        source: ${GOOGLE_ADC_PATH:-${HOME}/.config/gcloud/application_default_credentials.json}
         target: /var/secrets/google/application_default_credentials.json
         read_only: true
+        bind:
+          create_host_path: false
     depends_on:
       - render-simulator
       - grafana-mcp

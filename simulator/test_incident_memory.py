@@ -78,6 +78,23 @@ class IncidentMemoryTests(unittest.TestCase):
         self.assertEqual(len(second_messages), 1)
         self.assertNotIn("first incident", second_messages[0]["body"].lower())
 
+    def test_recovery_completion_stays_with_resolved_incident_after_reset(self):
+        first = self.memory.raise_incident(
+            "project-nova", "Project Nova", "gpu_oom", "Scene 87", "First issue.", self.briefing
+        )
+        self.memory.resolve_active("project-nova", "prioritize-scenes", "Recovered")
+        self.memory.add_message("project-nova", first["id"], "assistant", "Recovery completed for first incident")
+        # Reset has no production-wide conversation side effect. The next issue
+        # starts with a clean incident-scoped message list.
+        self.memory.resolve_active("project-nova", None, "Reset")
+        second = self.memory.raise_incident(
+            "project-nova", "Project Nova", "worker_loss", "Scene 91", "Second issue.", self.briefing
+        )
+        second_messages = self.memory.messages("project-nova", second["id"])
+        self.assertEqual(len(second_messages), 1)
+        self.assertNotIn("first incident", second_messages[0]["body"].lower())
+        self.assertEqual(self.memory.messages("project-nova"), [])
+
     def test_only_matching_verified_case_is_returned(self):
         matched = self.memory.similar_case(
             "gpu_oom", "render capacity", "render workers unavailable during the trailer pass"

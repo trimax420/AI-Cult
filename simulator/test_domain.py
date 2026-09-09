@@ -15,8 +15,9 @@ class ProjectNovaTests(unittest.TestCase):
                 self.assertEqual(state["scenario"], scenario["issue_type"])
                 self.assertTrue(state["incident_active"])
                 self.assertGreater(state["impact"]["projected_delay_minutes"], 0)
-                approval = engine.request_approval("prioritize-scenes")
-                engine.execute("prioritize-scenes", approval.id, "director")
+                action = "restore-asset" if scenario_id == "corrupted-asset" else "prioritize-scenes"
+                approval = engine.request_approval(action)
+                engine.execute(action, approval.id, "director")
                 for _ in range(10):
                     engine.tick()
                 self.assertTrue(engine.production.verification_complete)
@@ -49,10 +50,8 @@ class ProjectNovaTests(unittest.TestCase):
 
     def test_recovery_requires_an_active_incident(self):
         engine = ProductionEngine()
-        approval = engine.request_approval("restart-workers")
-        with self.assertRaisesRegex(ValueError, "no active incident"):
-            engine.execute("restart-workers", approval.id, "director")
-        self.assertFalse(approval.used)
+        with self.assertRaisesRegex(ValueError, "active incident"):
+            engine.request_approval("restart-workers")
 
     def test_retry_clears_old_verification_and_new_incident_clears_recovery(self):
         engine = ProductionEngine()
@@ -100,6 +99,7 @@ class ProjectNovaTests(unittest.TestCase):
 
     def test_expired_or_wrong_approval_cannot_execute(self):
         engine = ProductionEngine()
+        engine.inject_gpu_oom()
         approval = engine.request_approval("add-workers")
         approval.expires_at = utcnow() - timedelta(seconds=1)
         with self.assertRaisesRegex(ValueError, "expired"):

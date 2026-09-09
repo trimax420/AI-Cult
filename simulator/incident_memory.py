@@ -9,6 +9,7 @@ import re
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Callable
+from agent_gateway import presentation_text
 
 
 def utcnow() -> str:
@@ -287,9 +288,15 @@ class IncidentMemory:
                        WHERE production_id=? AND incident_id IS NULL ORDER BY created_at DESC LIMIT ?""",
                     (production_id, max(1, min(limit, 200))),
                 ).fetchall()
-        return [dict(row) for row in reversed(rows)]
+        messages = [dict(row) for row in reversed(rows)]
+        for message in messages:
+            if message['role'] == 'assistant':
+                message['body'] = presentation_text(message['body']) or 'This earlier response could not be displayed. Ask for a fresh production update.'
+        return messages
 
     def add_message(self, production_id: str, incident_id: str | None, role: str, body: str) -> dict:
+        if role == "assistant":
+            body = presentation_text(body) or "The response could not be displayed. Please retry the live review."
         message = {"id": str(uuid.uuid4()), "production_id": production_id, "incident_id": incident_id,
                    "role": role, "body": body, "created_at": utcnow()}
         with self._connection() as db:
@@ -311,7 +318,7 @@ class IncidentMemory:
     def update_run_recommendation(self, incident_id: str, action: str, source: str = "live-agent") -> None:
         with self._connection() as db:
             db.execute(
-                "UPDATE agent_runs SET recommended_action=?, source=?, completed_at=? WHERE incident_id=?",
+                "UPDATE agent_runs SET status='ready', recommended_action=?, source=?, completed_at=? WHERE incident_id=?",
                 (action, source, utcnow(), incident_id),
             )
 

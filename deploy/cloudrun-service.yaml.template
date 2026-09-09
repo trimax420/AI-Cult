@@ -1,0 +1,139 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: ai-production-director
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/cpu-throttling: 'false'
+        run.googleapis.com/container-dependencies: '{"dashboard":["simulator","agent","grafana-mcp"],"agent":["simulator","grafana-mcp"]}'
+        run.googleapis.com/secrets: 'grafana-token:projects/${PROJECT_NUMBER}/secrets/grafana-service-account-token,mcp-token:projects/${PROJECT_NUMBER}/secrets/mcp-bearer-token,otel-headers:projects/${PROJECT_NUMBER}/secrets/grafana-otlp-headers'
+        autoscaling.knative.dev/maxScale: '1'
+    spec:
+      serviceAccountName: ${SERVICE_ACCOUNT}
+      containerConcurrency: 40
+      timeoutSeconds: 300
+      containers:
+        - name: dashboard
+          image: ${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/dashboard:${IMAGE_TAG}
+          ports:
+            - name: http1
+              containerPort: 8080
+          env:
+            - name: NGINX_RESOLVER
+              value: 169.254.169.254
+            - name: SIMULATOR_UPSTREAM
+              value: http://localhost:8081
+            - name: AGENT_UPSTREAM
+              value: http://localhost:8090
+          resources:
+            limits:
+              cpu: 1
+              memory: 512Mi
+        - name: simulator
+          startupProbe:
+            tcpSocket:
+              port: 8081
+            periodSeconds: 5
+            failureThreshold: 24
+          image: ${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/simulator:${IMAGE_TAG}
+          command: ["uvicorn"]
+          args: ["app:app", "--host", "0.0.0.0", "--port", "8081"]
+          env:
+            - name: GEMINI_MODEL
+              value: ${GEMINI_MODEL}
+            - name: GOOGLE_CLOUD_LOCATION
+              value: ${MODEL_LOCATION}
+            - name: PORT
+              value: '8081'
+            - name: INCIDENT_DB_PATH
+              value: /data/production-director.db
+            - name: PRODUCTION_AGENT_URL
+              value: http://localhost:8090
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: ${GRAFANA_CLOUD_OTLP_ENDPOINT}
+            - name: GRAFANA_PUBLIC_URL
+              value: ${GRAFANA_URL}
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: otel-headers
+                  key: latest
+          volumeMounts:
+            - name: demo-ledger
+              mountPath: /data
+          resources:
+            limits:
+              cpu: 1
+              memory: 512Mi
+        - name: agent
+          startupProbe:
+            tcpSocket:
+              port: 8090
+            periodSeconds: 5
+            failureThreshold: 24
+          image: ${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/agent:${IMAGE_TAG}
+          env:
+            - name: SIMULATOR_URL
+              value: http://localhost:8081
+            - name: GRAFANA_MCP_URL
+              value: http://localhost:8000/mcp
+            - name: GRAFANA_MCP_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-token
+                  key: latest
+            - name: GRAFANA_PROMETHEUS_DATASOURCE_UID
+              value: ${GRAFANA_PROMETHEUS_DATASOURCE_UID}
+            - name: GRAFANA_LOKI_DATASOURCE_UID
+              value: ${GRAFANA_LOKI_DATASOURCE_UID}
+            - name: GRAFANA_TEMPO_DATASOURCE_UID
+              value: ${GRAFANA_TEMPO_DATASOURCE_UID}
+            - name: GOOGLE_GENAI_USE_VERTEXAI
+              value: 'TRUE'
+            - name: GOOGLE_CLOUD_PROJECT
+              value: ${PROJECT_ID}
+            - name: GOOGLE_CLOUD_LOCATION
+              value: ${MODEL_LOCATION}
+            - name: GEMINI_MODEL
+              value: ${GEMINI_MODEL}
+          resources:
+            limits:
+              cpu: 1
+              memory: 512Mi
+        - name: grafana-mcp
+          startupProbe:
+            tcpSocket:
+              port: 8000
+            periodSeconds: 5
+            failureThreshold: 24
+          image: grafana/mcp-grafana:latest
+          args: ["--transport", "streamable-http", "--address", "0.0.0.0:8000", "--allowed-hosts", "localhost:8000,127.0.0.1:8000", "--metrics"]
+          env:
+            - name: GRAFANA_URL
+              value: ${GRAFANA_URL}
+            - name: GRAFANA_SERVICE_ACCOUNT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-token
+                  key: latest
+            - name: MCP_GRAFANA_SERVER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-token
+                  key: latest
+          resources:
+            limits:
+              cpu: 1
+              memory: 512Mi
+      volumes:
+        - name: demo-ledger
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi

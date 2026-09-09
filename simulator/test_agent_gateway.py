@@ -9,6 +9,7 @@ from agent_gateway import AgentGateway, production_safe_reply, recommendation_ac
 class FakeAdkHandler(BaseHTTPRequestHandler):
     sessions: list[str] = []
     messages: list[dict] = []
+    extra_events: list[dict] = []
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
@@ -16,7 +17,7 @@ class FakeAdkHandler(BaseHTTPRequestHandler):
         if self.path == "/run_sse":
             self.messages.append(json.loads(body))
             payload = {"content": {"parts": [{"text": "The trailer remains on time. recommendation_action=restart-workers"}]}}
-            response = f"data: {json.dumps(payload)}\n\n".encode()
+            response = "".join(f"data: {json.dumps(event)}\n\n" for event in [*self.extra_events,payload]).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Content-Length", str(len(response)))
@@ -33,6 +34,7 @@ class FakeAdkHandler(BaseHTTPRequestHandler):
 
 class AgentGatewayTests(unittest.TestCase):
     def setUp(self):
+        FakeAdkHandler.extra_events = []
         FakeAdkHandler.sessions = []
         FakeAdkHandler.messages = []
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), FakeAdkHandler)
@@ -53,6 +55,17 @@ class AgentGatewayTests(unittest.TestCase):
         self.assertEqual({message["sessionId"] for message in FakeAdkHandler.messages},
                          {"project-nova-incident-1"})
         self.assertEqual(len(FakeAdkHandler.messages), 2)
+
+    def test_tool_thinking_and_partial_events_do_not_become_the_answer(self):
+        FakeAdkHandler.extra_events=[
+            {'content':{'parts':[{'text':'private reasoning','thought':True}]}},
+            {'partial':True,'content':{'parts':[{'text':'{"unfinished":'}]}},
+            {'content':{'parts':[{'functionResponse':{'name':'grafana_query_metrics','response':{'ok':True}}},{'text':'tool dump'}]}},
+        ]
+        answer=self.gateway.send('project-nova','incident-2','Explain the recovery')
+        self.assertIn('trailer remains on time',answer)
+        self.assertNotIn('private reasoning',answer)
+        self.assertEqual(len(self.gateway.details()['evidence']),1)
 
     def test_presentation_boundary_removes_internal_language_and_action_marker(self):
         raw = ("Grafana MCP confirmed the trace ID. The trailer remains on time after prioritising scenes. "
